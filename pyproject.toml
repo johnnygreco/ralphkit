@@ -8,10 +8,10 @@ license = "Apache-2.0"
 dependencies = ["pyyaml>=6.0"]
 
 [project.scripts]
-ralph = "ralph.cli:main"
+ralph = "ralphkit.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ralph"]
+packages = ["src/ralphkit"]
 
 [build-system]
 requires = ["hatchling"]
