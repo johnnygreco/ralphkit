@@ -51,8 +51,8 @@ def main() -> None:
         print(f"{RED}Error: No task provided.{NC}")
         print()
         print("Provide a task via:")
-        print('  ralph "Build a REST API"          # CLI string')
-        print("  ralph task.md                     # markdown file")
+        print('  ralph-loop "Build a REST API"     # CLI string')
+        print("  ralph-loop task.md                # markdown file")
         print("  task: ... in ralph.yaml           # config file")
         sys.exit(1)
 

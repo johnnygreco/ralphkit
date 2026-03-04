@@ -11,7 +11,7 @@ dependencies = ["pyyaml>=6.0"]
 dev = ["pytest>=7.0", "ruff>=0.4"]
 
 [project.scripts]
-ralph = "ralphkit.cli:main"
+ralph-loop = "ralphkit.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ralphkit"]

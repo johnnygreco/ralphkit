@@ -13,19 +13,19 @@ uv tool install -e path/to/ralphkit
 Or run directly:
 
 ```bash
-uvx --from path/to/ralphkit ralph "your task here"
+uvx --from path/to/ralphkit ralph-loop "your task here"
 ```
 
 ## Quick Start
 
 ```bash
-ralph "Create a Python function in prime.py that checks if a number is prime. Include unit tests in test_prime.py."
+ralph-loop "Create a Python function in prime.py that checks if a number is prime. Include unit tests in test_prime.py."
 ```
 
 Pass a markdown file:
 
 ```bash
-ralph task.md
+ralph-loop task.md
 ```
 
 Or put the task in your config:
@@ -43,15 +43,15 @@ task: |
 Then just run:
 
 ```bash
-ralph
+ralph-loop
 ```
 
 ## Task Input
 
 Tasks can come from three sources (in priority order):
 
-1. **CLI string**: `ralph "Build a REST API"` — ad-hoc, one-off tasks
-2. **CLI markdown file**: `ralph task.md` — reusable task files, detected by `.md` extension + file exists
+1. **CLI string**: `ralph-loop "Build a REST API"` — ad-hoc, one-off tasks
+2. **CLI markdown file**: `ralph-loop task.md` — reusable task files, detected by `.md` extension + file exists
 3. **In config YAML**: `task` field in `ralph.yaml` — best for reproducibility, keeps task + config together
 
 CLI arg always wins over config.
@@ -71,7 +71,7 @@ All fields are optional — sensible defaults are used for anything omitted. If 
 To use a config file in a different location:
 
 ```bash
-ralph --config path/to/config.yaml "Build a REST API in Go"
+ralph-loop --config path/to/config.yaml "Build a REST API in Go"
 ```
 
 ## How It Works
@@ -91,11 +91,11 @@ Each iteration:
 2. **Review phase** — the reviewer model examines all files, runs tests, and writes either `SHIP` (approve) or `REVISE` (with feedback).
 3. If `REVISE`, the feedback is passed to the next iteration. If `SHIP`, the loop exits successfully.
 
-State is persisted in a `.ralph/` directory so each stateless `claude -p` invocation can pick up where the last left off.
+State is persisted in a `.ralphkit/` directory so each stateless `claude -p` invocation can pick up where the last left off.
 
 ## State Files
 
-All state lives in `.ralph/` in the current working directory:
+All state lives in `.ralphkit/` in the current working directory:
 
 | File | Purpose |
 |------|---------|
@@ -115,4 +115,4 @@ uv tool uninstall ralphkit
 ## Requirements
 
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`claude` must be on your PATH)
-- Python 3.11+
+- Python 3.10+
