@@ -75,7 +75,9 @@ def main() -> None:
     print()
 
     # ── Confirmation ────────────────────────────────────────────────
-    print(f"{YELLOW}Warning: This will run up to {config.max_iterations} iterations using two AI models.{NC}")
+    print(
+        f"{YELLOW}Warning: This will run up to {config.max_iterations} iterations using two AI models.{NC}"
+    )
     print(f"{YELLOW}   Each iteration costs API credits.{NC}")
     print()
     confirm = input("Proceed? (y/N) ").strip()
@@ -117,7 +119,9 @@ def main() -> None:
 
         # ── Review phase ────────────────────────────────────────────
         print(f"  {YELLOW}Review phase ({config.reviewer_model})...{NC}")
-        run_claude(reviewer_user_prompt(), config.reviewer_model, REVIEWER_SYSTEM_PROMPT)
+        run_claude(
+            reviewer_user_prompt(), config.reviewer_model, REVIEWER_SYSTEM_PROMPT
+        )
         print(f"  {GREEN}   Done.{NC}")
         print()
 

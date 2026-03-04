@@ -1,7 +1,9 @@
 import subprocess
 
 
-def run_claude(prompt: str, model: str, system_prompt: str) -> subprocess.CompletedProcess:
+def run_claude(
+    prompt: str, model: str, system_prompt: str
+) -> subprocess.CompletedProcess:
     result = subprocess.run(
         [
             "claude",
