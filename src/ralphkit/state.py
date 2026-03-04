@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 class StateDir:
-    def __init__(self, path: str | Path = ".ralph"):
+    def __init__(self, path: str | Path = ".ralphkit"):
         self.path = Path(path)
 
     def setup(self) -> None:
