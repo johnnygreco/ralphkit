@@ -1,0 +1,3 @@
+worker_model: opus
+reviewer_model: sonnet
+max_iterations: 10
