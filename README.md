@@ -1,4 +1,4 @@
-# Ralph Loop
+# ralphkit
 
 An iterative work → review loop for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). One model does the work, a different model reviews it. The loop continues until the reviewer says **SHIP** or max iterations are reached.
 
@@ -7,13 +7,13 @@ Inspired by [Goose's Ralph pattern](https://block.github.io/goose/docs/tutorials
 ## Install
 
 ```bash
-uv tool install -e path/to/ralph
+uv tool install -e path/to/ralphkit
 ```
 
 Or run directly:
 
 ```bash
-uvx --from path/to/ralph ralph "your task here"
+uvx --from path/to/ralphkit ralph "your task here"
 ```
 
 ## Quick Start
@@ -77,12 +77,12 @@ ralph --config path/to/config.yaml "Build a REST API in Go"
 ## How It Works
 
 ```
-┌─────────────────────────────────────┐
-│  1. Read task                       │
-│  2. Worker model does the work      │ ◄─── iteration N
-│  3. Reviewer model reviews it       │
-│  4. SHIP? → done. REVISE? → loop.  │
-└─────────────────────────────────────┘
+┌─────────────────────────────────────────┐
+│  1. Read task                           │
+│  2. Worker model does the work          │ ◄─── iteration N
+│  3. Reviewer model reviews it           │
+│  4. SHIP? -> done. REVISE? -> loop.     │
+└─────────────────────────────────────────┘
 ```
 
 Each iteration:
@@ -109,7 +109,7 @@ All state lives in `.ralph/` in the current working directory:
 ## Uninstall
 
 ```bash
-uv tool uninstall ralph-loop
+uv tool uninstall ralphkit
 ```
 
 ## Requirements
