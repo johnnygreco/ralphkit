@@ -1,0 +1,18 @@
+[project]
+name = "ralphkit"
+version = "0.1.0"
+description = "Iterative work/review loop for Claude Code"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = ["pyyaml>=6.0"]
+
+[project.scripts]
+ralph = "ralph.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ralph"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
