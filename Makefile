@@ -4,8 +4,8 @@
 help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-install: ## Install dependencies
-	uv sync
+install: ## Install dependencies (including dev extras)
+	uv sync --extra dev
 
 test: ## Run tests with verbose output
 	uv run pytest tests/ -v
