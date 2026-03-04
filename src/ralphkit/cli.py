@@ -2,15 +2,15 @@ import argparse
 import sys
 from pathlib import Path
 
-from ralph.config import load_config
-from ralph.prompts import (
+from ralphkit.config import load_config
+from ralphkit.prompts import (
     REVIEWER_SYSTEM_PROMPT,
     WORKER_SYSTEM_PROMPT,
     reviewer_user_prompt,
     worker_user_prompt,
 )
-from ralph.runner import run_claude
-from ralph.state import StateDir
+from ralphkit.runner import run_claude
+from ralphkit.state import StateDir
 
 # ── Colors ──────────────────────────────────────────────────────────
 RED = "\033[0;31m"
