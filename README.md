@@ -1,78 +1,81 @@
 # ralphkit
 
-An iterative work → review loop for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). One model does the work, a different model reviews it. The loop continues until the reviewer says **SHIP** or max iterations are reached.
+An iterative work/review loop for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). One model does the work, a different model reviews it. The loop continues until the reviewer says **SHIP** or max iterations are reached.
 
 Inspired by [Goose's Ralph pattern](https://block.github.io/goose/docs/tutorials/ralph-loop).
 
 ## Install
 
 ```bash
-uv tool install -e path/to/ralphkit
+pip install ralphkit
 ```
 
-Or run directly:
+With [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uvx --from path/to/ralphkit ralph-loop "your task here"
+uv tool install ralphkit
+```
+
+Or run directly without installing:
+
+```bash
+uvx ralphkit ralph-loop "your task here"
 ```
 
 ## Quick Start
 
 ```bash
-ralph-loop "Create a Python function in prime.py that checks if a number is prime. Include unit tests in test_prime.py."
+ralph-loop "Create a Python function in prime.py that checks if a number is prime. Include unit tests."
 ```
 
-Pass a markdown file:
+## Usage
+
+```
+ralph-loop TASK [--config PATH] [--worker-model MODEL] [--reviewer-model MODEL] [--max-iterations N] [-y]
+```
+
+**Arguments:**
+
+| Argument | Description | Default |
+|----------|-------------|---------|
+| `TASK` | Task description (string or path to `.md` file) | required |
+| `--config PATH` | Load settings from a YAML config file | none |
+| `--worker-model` | Model for the work phase | `opus` |
+| `--reviewer-model` | Model for the review phase | `sonnet` |
+| `--max-iterations` | Max work/review cycles | `10` |
+| `-y` / `--yes` | Skip confirmation prompt | off |
+
+**Examples:**
 
 ```bash
+# Inline task
+ralph-loop "Build a REST API"
+
+# Task from a markdown file
 ralph-loop task.md
+
+# Override models
+ralph-loop "Build a REST API" --worker-model sonnet --reviewer-model haiku
+
+# Use a config file for shared settings
+ralph-loop "Build a REST API" --config ralph.yaml
+
+# Skip confirmation
+ralph-loop "Build a REST API" -y
 ```
 
-Or put the task in your config:
+### Config file
+
+A config file is optional. When provided via `--config`, its values serve as defaults that CLI args can override.
 
 ```yaml
 # ralph.yaml
 worker_model: opus
 reviewer_model: sonnet
 max_iterations: 10
-task: |
-  Create a Python function in prime.py that checks if a number is prime.
-  Include unit tests in test_prime.py.
 ```
 
-Then just run:
-
-```bash
-ralph-loop
-```
-
-## Task Input
-
-Tasks can come from three sources (in priority order):
-
-1. **CLI string**: `ralph-loop "Build a REST API"` — ad-hoc, one-off tasks
-2. **CLI markdown file**: `ralph-loop task.md` — reusable task files, detected by `.md` extension + file exists
-3. **In config YAML**: `task` field in `ralph.yaml` — best for reproducibility, keeps task + config together
-
-CLI arg always wins over config.
-
-## Configuration
-
-Create a `ralph.yaml` in your working directory:
-
-```yaml
-worker_model: opus        # Model for work phase (default: opus)
-reviewer_model: sonnet    # Model for review phase (default: sonnet)
-max_iterations: 10        # Max work/review cycles (default: 10)
-```
-
-All fields are optional — sensible defaults are used for anything omitted. If no `ralph.yaml` exists, all defaults apply.
-
-To use a config file in a different location:
-
-```bash
-ralph-loop --config path/to/config.yaml "Build a REST API in Go"
-```
+Resolution order: built-in defaults → config file → CLI args.
 
 ## How It Works
 
@@ -91,11 +94,9 @@ Each iteration:
 2. **Review phase** — the reviewer model examines all files, runs tests, and writes either `SHIP` (approve) or `REVISE` (with feedback).
 3. If `REVISE`, the feedback is passed to the next iteration. If `SHIP`, the loop exits successfully.
 
-State is persisted in a `.ralphkit/` directory so each stateless `claude -p` invocation can pick up where the last left off.
-
 ## State Files
 
-All state lives in `.ralphkit/` in the current working directory:
+State is persisted in `.ralphkit/` in the current working directory so each stateless `claude -p` invocation can pick up where the last left off.
 
 | File | Purpose |
 |------|---------|
@@ -105,12 +106,6 @@ All state lives in `.ralphkit/` in the current working directory:
 | `work-complete.txt` | Created when the worker thinks it's done |
 | `review-result.txt` | `SHIP` or `REVISE` |
 | `review-feedback.txt` | Specific feedback from the reviewer |
-
-## Uninstall
-
-```bash
-uv tool uninstall ralphkit
-```
 
 ## Requirements
 

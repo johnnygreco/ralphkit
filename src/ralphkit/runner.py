@@ -1,10 +1,8 @@
 import subprocess
 
 
-def run_claude(
-    prompt: str, model: str, system_prompt: str
-) -> subprocess.CompletedProcess:
-    result = subprocess.run(
+def run_claude(prompt: str, model: str, system_prompt: str) -> None:
+    subprocess.run(
         [
             "claude",
             "-p",
@@ -18,4 +16,3 @@ def run_claude(
         stdout=subprocess.DEVNULL,
         check=True,
     )
-    return result

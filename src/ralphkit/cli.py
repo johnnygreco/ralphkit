@@ -1,8 +1,9 @@
 import argparse
 import sys
+from dataclasses import replace
 from pathlib import Path
 
-from ralphkit.config import load_config
+from ralphkit.config import VERDICT_REVISE, VERDICT_SHIP, RalphConfig, load_config
 from ralphkit.prompts import (
     REVIEWER_SYSTEM_PROMPT,
     WORKER_SYSTEM_PROMPT,
@@ -20,12 +21,27 @@ BLUE = "\033[0;34m"
 NC = "\033[0m"
 
 
-def resolve_task(cli_task: str | None, config_task: str | None) -> str | None:
-    if cli_task is not None:
-        if cli_task.endswith(".md") and Path(cli_task).is_file():
-            return Path(cli_task).read_text()
-        return cli_task
-    return config_task
+def resolve_task(raw: str) -> str:
+    """If the string ends with .md and the file exists, read it. Otherwise return as-is."""
+    if raw.endswith(".md"):
+        p = Path(raw)
+        try:
+            return p.read_text()
+        except (FileNotFoundError, OSError):
+            pass
+    return raw
+
+
+def merge_config(config: RalphConfig, args: argparse.Namespace) -> RalphConfig:
+    """Overlay explicit CLI args on top of config values."""
+    overrides = {}
+    if args.worker_model is not None:
+        overrides["worker_model"] = args.worker_model
+    if args.reviewer_model is not None:
+        overrides["reviewer_model"] = args.reviewer_model
+    if args.max_iterations is not None:
+        overrides["max_iterations"] = args.max_iterations
+    return replace(config, **overrides) if overrides else config
 
 
 def main() -> None:
@@ -34,27 +50,40 @@ def main() -> None:
     )
     parser.add_argument(
         "task",
-        nargs="?",
         help="Task description (string or path to .md file)",
     )
     parser.add_argument(
         "--config",
-        default="ralph.yaml",
-        help="Path to YAML config file (default: ralph.yaml)",
+        default=None,
+        help="Path to YAML config file (only loaded when explicitly provided)",
+    )
+    parser.add_argument(
+        "--worker-model",
+        default=None,
+        help="Model for work phase (default: opus)",
+    )
+    parser.add_argument(
+        "--reviewer-model",
+        default=None,
+        help="Model for review phase (default: sonnet)",
+    )
+    parser.add_argument(
+        "--max-iterations",
+        type=int,
+        default=None,
+        help="Max work/review cycles (default: 10)",
+    )
+    parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Skip confirmation prompt",
     )
     args = parser.parse_args()
 
     config = load_config(args.config)
-    task_content = resolve_task(args.task, config.task)
-
-    if not task_content:
-        print(f"{RED}Error: No task provided.{NC}")
-        print()
-        print("Provide a task via:")
-        print('  ralph-loop "Build a REST API"     # CLI string')
-        print("  ralph-loop task.md                # markdown file")
-        print("  task: ... in ralph.yaml           # config file")
-        sys.exit(1)
+    config = merge_config(config, args)
+    task_content = resolve_task(args.task)
 
     state = StateDir()
     state.setup()
@@ -75,16 +104,17 @@ def main() -> None:
     print()
 
     # ── Confirmation ────────────────────────────────────────────────
-    print(
-        f"{YELLOW}Warning: This will run up to {config.max_iterations} iterations using two AI models.{NC}"
-    )
-    print(f"{YELLOW}   Each iteration costs API credits.{NC}")
-    print()
-    confirm = input("Proceed? (y/N) ").strip()
-    if confirm.lower() not in ("y", "yes"):
-        print(f"{RED}Aborted.{NC}")
-        sys.exit(1)
-    print()
+    if not args.yes:
+        print(
+            f"{YELLOW}Warning: This will run up to {config.max_iterations} iterations using two AI models.{NC}"
+        )
+        print(f"{YELLOW}   Each iteration costs API credits.{NC}")
+        print()
+        confirm = input("Proceed? (y/N) ").strip()
+        if confirm.lower() not in ("y", "yes"):
+            print(f"{RED}Aborted.{NC}")
+            sys.exit(1)
+        print()
 
     # ── Main loop ───────────────────────────────────────────────────
     for i in range(1, config.max_iterations + 1):
@@ -131,13 +161,13 @@ def main() -> None:
             print(f"{RED}Review failed: no review-result.txt produced.{NC}")
             sys.exit(1)
 
-        if result == "SHIP":
+        if result == VERDICT_SHIP:
             print(f"{GREEN}{'=' * 59}{NC}")
             print(f"{GREEN}  SHIP — Task completed in {i} iteration(s)!{NC}")
             print(f"{GREEN}{'=' * 59}{NC}")
             print()
             sys.exit(0)
-        elif result == "REVISE":
+        elif result == VERDICT_REVISE:
             print(f"  {YELLOW}REVISE — Reviewer wants changes.{NC}")
             feedback = state.read_review_feedback()
             if feedback:
