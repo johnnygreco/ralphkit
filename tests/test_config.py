@@ -123,11 +123,12 @@ loop:
         load_config(cfg_file)
 
 
-def test_load_config_invalid_max_iterations(tmp_path):
+@pytest.mark.parametrize("value", [0, -1])
+def test_load_config_invalid_max_iterations(tmp_path, value):
     cfg_file = tmp_path / "ralph.yaml"
     cfg_file.write_text(
-        """\
-max_iterations: 0
+        f"""\
+max_iterations: {value}
 default_model: opus
 loop:
   - step_name: worker
@@ -168,3 +169,118 @@ def test_resolve_task_md_file(tmp_path):
 
 def test_resolve_task_missing_md():
     assert resolve_task("nonexistent.md") == "nonexistent.md"
+
+
+def test_load_config_empty_loop(tmp_path):
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+max_iterations: 5
+default_model: opus
+loop: []
+"""
+    )
+    with pytest.raises(ValueError, match="loop must have at least 1 step"):
+        load_config(cfg_file)
+
+
+def test_load_config_missing_max_iterations(tmp_path):
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+default_model: opus
+loop:
+  - step_name: worker
+    task_prompt: "Work."
+    system_prompt: "System."
+"""
+    )
+    with pytest.raises(ValueError, match="missing required key 'max_iterations'"):
+        load_config(cfg_file)
+
+
+def test_load_config_empty_yaml(tmp_path):
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text("")
+    with pytest.raises(ValueError, match="missing required key"):
+        load_config(cfg_file)
+
+
+def test_load_config_step_missing_step_name(tmp_path):
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+max_iterations: 5
+default_model: opus
+loop:
+  - task_prompt: "Work."
+    system_prompt: "System."
+"""
+    )
+    with pytest.raises(ValueError, match="missing required field 'step_name'"):
+        load_config(cfg_file)
+
+
+def test_load_config_step_missing_task_prompt(tmp_path):
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+max_iterations: 5
+default_model: opus
+loop:
+  - step_name: worker
+    system_prompt: "System."
+"""
+    )
+    with pytest.raises(ValueError, match="missing required field 'task_prompt'"):
+        load_config(cfg_file)
+
+
+def test_load_config_step_model_none_by_default(tmp_path):
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+max_iterations: 5
+default_model: opus
+loop:
+  - step_name: worker
+    task_prompt: "Work."
+    system_prompt: "System."
+"""
+    )
+    config = load_config(cfg_file)
+    assert config.loop[0].model is None
+
+
+def test_parse_steps_setup_section_error_message(tmp_path):
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+max_iterations: 5
+default_model: opus
+setup:
+  - step_name: init
+loop:
+  - step_name: worker
+    task_prompt: "Work."
+    system_prompt: "System."
+"""
+    )
+    with pytest.raises(ValueError, match=r"setup\[0\] is missing required field"):
+        load_config(cfg_file)
+
+
+def test_load_config_max_iterations_coerced_to_int(tmp_path):
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+max_iterations: "3"
+default_model: opus
+loop:
+  - step_name: worker
+    task_prompt: "Work."
+    system_prompt: "System."
+"""
+    )
+    config = load_config(cfg_file)
+    assert config.max_iterations == 3

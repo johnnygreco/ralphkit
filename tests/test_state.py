@@ -83,3 +83,37 @@ def test_is_blocked(tmp_path):
     assert state.is_blocked() is None
     (tmp_path / "RALPH-BLOCKED.md").write_text("blocked reason")
     assert state.is_blocked() == "blocked reason"
+
+
+def test_clean_idempotent(tmp_path):
+    state = StateDir(tmp_path)
+    state.clean()  # no files exist, should not raise
+
+
+def test_clean_for_next_iteration_idempotent(tmp_path):
+    state = StateDir(tmp_path)
+    state.clean_for_next_iteration()  # no files exist, should not raise
+
+
+def test_setup_idempotent(tmp_path):
+    state = StateDir(tmp_path / "state")
+    state.setup()
+    state.setup()  # second call should not raise
+    assert state.path.is_dir()
+
+
+def test_read_work_summary_returns_content(tmp_path):
+    state = StateDir(tmp_path)
+    (tmp_path / "work-summary.md").write_text("  summary\n")
+    assert state.read_work_summary() == "  summary\n"  # not stripped
+
+
+def test_read_review_feedback_returns_content(tmp_path):
+    state = StateDir(tmp_path)
+    (tmp_path / "review-feedback.md").write_text("  feedback\n")
+    assert state.read_review_feedback() == "  feedback\n"  # not stripped
+
+
+def test_default_state_dir_path():
+    state = StateDir()
+    assert str(state.path) == ".ralphkit"
