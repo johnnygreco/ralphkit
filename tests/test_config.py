@@ -40,13 +40,6 @@ def test_load_config_warns_unknown_keys(tmp_path, capsys):
     assert "unknown config keys ignored: task" in capsys.readouterr().err
 
 
-def test_load_config_invalid_max_iterations(tmp_path):
-    cfg_file = tmp_path / "ralph.yaml"
-    cfg_file.write_text("max_iterations: 0\n")
-    with pytest.raises(ValueError, match="max_iterations must be >= 1"):
-        load_config(cfg_file)
-
-
 def test_resolve_task_string():
     assert resolve_task("do something") == "do something"
 

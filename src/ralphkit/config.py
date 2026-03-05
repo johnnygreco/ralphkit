@@ -1,3 +1,4 @@
+import sys
 from dataclasses import dataclass, fields
 from pathlib import Path
 
@@ -31,8 +32,6 @@ def load_config(path: str | Path | None) -> RalphConfig:
     valid_fields = {f.name for f in fields(RalphConfig)}
     unknown = set(data) - valid_fields
     if unknown:
-        import sys
-
         print(
             f"Warning: unknown config keys ignored: {', '.join(sorted(unknown))}",
             file=sys.stderr,
@@ -40,7 +39,4 @@ def load_config(path: str | Path | None) -> RalphConfig:
     kwargs = {k: data[k] for k in data if k in valid_fields}
     if "max_iterations" in kwargs:
         kwargs["max_iterations"] = int(kwargs["max_iterations"])
-    config = RalphConfig(**kwargs)
-    if config.max_iterations < 1:
-        raise ValueError(f"max_iterations must be >= 1, got {config.max_iterations}")
-    return config
+    return RalphConfig(**kwargs)

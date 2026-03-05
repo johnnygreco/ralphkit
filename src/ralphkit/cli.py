@@ -21,6 +21,15 @@ BLUE = "\033[0;34m"
 NC = "\033[0m"
 
 
+def _run_phase(prompt: str, model: str, system_prompt: str) -> None:
+    """Run a claude phase, exiting on failure."""
+    try:
+        run_claude(prompt, model, system_prompt)
+    except RuntimeError as e:
+        print(f"\n{RED}Error: {e}{NC}", file=sys.stderr)
+        sys.exit(1)
+
+
 def resolve_task(raw: str) -> str:
     """If the string ends with .md and the file exists, read it. Otherwise return as-is."""
     if raw.endswith(".md"):
@@ -171,11 +180,7 @@ def main() -> None:
             if worker_up_template
             else worker_user_prompt(i)
         )
-        try:
-            run_claude(w_up, config.worker_model, worker_sp)
-        except RuntimeError as e:
-            print(f"\n{RED}Error: {e}{NC}", file=sys.stderr)
-            sys.exit(1)
+        _run_phase(w_up, config.worker_model, worker_sp)
         print(f"  {GREEN}   Done.{NC}")
 
         # Check for blocked state
@@ -197,11 +202,7 @@ def main() -> None:
 
         # ── Review phase ────────────────────────────────────────────
         print(f"  {YELLOW}Review phase ({config.reviewer_model})...{NC}")
-        try:
-            run_claude(reviewer_up, config.reviewer_model, reviewer_sp)
-        except RuntimeError as e:
-            print(f"\n{RED}Error: {e}{NC}", file=sys.stderr)
-            sys.exit(1)
+        _run_phase(reviewer_up, config.reviewer_model, reviewer_sp)
         print(f"  {GREEN}   Done.{NC}")
         print()
 
