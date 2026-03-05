@@ -1,6 +1,6 @@
 # ralphkit
 
-An iterative work/review loop for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). One model does the work, a different model reviews it. The loop continues until the reviewer says **SHIP** or max iterations are reached.
+A step-based pipeline for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Define setup, loop, and cleanup phases in a YAML config. The loop iterates until the reviewer says **SHIP** or max iterations are reached.
 
 Inspired by [Goose's Ralph pattern](https://block.github.io/goose/docs/tutorials/ralph-loop).
 
@@ -19,19 +19,19 @@ uv tool install ralphkit
 Or run directly without installing:
 
 ```bash
-uvx ralphkit ralph-loop "your task here"
+uvx ralphkit ralph-loop "your task here" --config ralph.yaml
 ```
 
 ## Quick Start
 
 ```bash
-ralph-loop "Create a Python function in prime.py that checks if a number is prime. Include unit tests."
+ralph-loop "Create a Python function in prime.py that checks if a number is prime. Include unit tests." --config configs/example.yaml
 ```
 
 ## Usage
 
 ```
-ralph-loop TASK [OPTIONS]
+ralph-loop TASK --config PATH [OPTIONS]
 ```
 
 **Arguments:**
@@ -39,76 +39,104 @@ ralph-loop TASK [OPTIONS]
 | Argument | Description | Default |
 |----------|-------------|---------|
 | `TASK` | Task description (string or path to `.md` file) | required |
-| `--config PATH` | Load settings from a YAML config file | none |
-| `--worker-model` | Model for the work phase | `opus` |
-| `--reviewer-model` | Model for the review phase | `sonnet` |
-| `--max-iterations` | Max work/review cycles | `10` |
-| `--worker-system-prompt` | Override the worker system prompt entirely | built-in |
-| `--reviewer-system-prompt` | Override the reviewer system prompt entirely | built-in |
-| `--worker-user-prompt` | Override the worker user prompt (`{iteration}` is substituted) | built-in |
-| `--reviewer-user-prompt` | Override the reviewer user prompt | built-in |
-| `--append-system-prompt` | Extra text appended to both system prompts | none |
-| `-y` / `--yes` | Skip confirmation prompt | off |
+| `--config PATH` | Path to YAML config file | required |
+| `--max-iterations N` | Override max iterations from config | from config |
+| `-f` / `--force` | Skip confirmation prompt | off |
 
 **Examples:**
 
 ```bash
 # Inline task
-ralph-loop "Build a REST API"
-
-# Task from a markdown file
-ralph-loop task.md
-
-# Override models
-ralph-loop "Build a REST API" --worker-model sonnet --reviewer-model haiku
-
-# Use a config file for shared settings
 ralph-loop "Build a REST API" --config ralph.yaml
 
+# Task from a markdown file
+ralph-loop task.md --config ralph.yaml
+
+# Override max iterations
+ralph-loop "Build a REST API" --config ralph.yaml --max-iterations 5
+
 # Skip confirmation
-ralph-loop "Build a REST API" -y
+ralph-loop "Build a REST API" --config ralph.yaml -f
 ```
 
 ### Config file
 
-A config file is optional. When provided via `--config`, its values serve as defaults that CLI args can override.
+A YAML config file is required. It defines three phases — **setup**, **loop**, and **cleanup** — each containing a list of steps. Only `loop` is required.
 
 ```yaml
-# ralph.yaml
-worker_model: opus
-reviewer_model: sonnet
 max_iterations: 10
+default_model: opus
 
-# Optional: override system prompts entirely
-# worker_system_prompt: "Your custom worker instructions..."
-# reviewer_system_prompt: "Your custom reviewer instructions..."
+# Optional: runs once before the loop
+setup:
+  - step_name: init
+    task_prompt: "Initialize the project."
+    system_prompt: "You are a setup agent."
 
-# Optional: override user prompts (the -p argument to claude)
-# worker_user_prompt: "Begin iteration {iteration}. Read .ralphkit/task.md and start."
-# reviewer_user_prompt: "Review the work and write your verdict."
+# Required: iterated until SHIP or max iterations
+loop:
+  - step_name: worker
+    task_prompt: "Read .ralphkit/task.md and begin working. This is iteration {iteration}."
+    system_prompt: "You are a worker in a RALPH LOOP..."
+    model: opus
+  - step_name: reviewer
+    task_prompt: "Review the work done for the task in .ralphkit/task.md."
+    system_prompt: "You are a code reviewer..."
+    model: sonnet
 
-# Optional: append extra instructions to both system prompts
-# append_system_prompt: "Always use pytest. Never modify the README."
+# Optional: runs once after the loop (always, even on failure)
+cleanup:
+  - step_name: finalize
+    task_prompt: "Clean up temporary files."
+    system_prompt: "You are a cleanup agent."
 ```
 
-Resolution order: built-in defaults → config file → CLI args.
+**Required top-level keys:** `max_iterations`, `default_model`, `loop`
+
+Each step requires `step_name`, `task_prompt`, and `system_prompt`. The optional `model` field overrides `default_model` for that step.
+
+### Template variables
+
+Both `task_prompt` and `system_prompt` support template variables via `{variable_name}`. Unrecognized variables are left as-is.
+
+**All phases:**
+
+| Variable | Description |
+|----------|-------------|
+| `{step_name}` | Current step's name |
+| `{max_iterations}` | Configured max iterations |
+| `{default_model}` | Pipeline's default model |
+| `{model}` | Resolved model for this step |
+| `{state_dir}` | State directory path (`.ralphkit`) |
+
+**Loop phase only:**
+
+| Variable | Description |
+|----------|-------------|
+| `{iteration}` | Current iteration number (1-based) |
+
+See [`configs/example.yaml`](configs/example.yaml) for a complete working config.
 
 ## How It Works
 
 ```
-┌─────────────────────────────────────────┐
-│  1. Read task                           │
-│  2. Worker model does the work          │ ◄─── iteration N
-│  3. Reviewer model reviews it           │
-│  4. SHIP? -> done. REVISE? -> loop.     │
-└─────────────────────────────────────────┘
+ Setup (once)          Loop (iterate)              Cleanup (once, always)
+┌──────────┐    ┌───────────────────────┐    ┌──────────────┐
+│ step 1   │    │ step 1 (e.g. worker)  │    │ step 1       │
+│ step 2   │    │ step 2 (e.g. reviewer)│    │ ...          │
+│ ...      │    │ ...                   │    └──────────────┘
+└──────────┘    │ SHIP? → done          │
+                │ REVISE? → loop again  │
+                └───────────────────────┘
 ```
 
-Each iteration:
+Each loop iteration runs all loop steps in order, then checks the review result:
 
-1. **Work phase** — the worker model reads the task (and any prior review feedback), writes code, runs tests, and summarizes what it did.
-2. **Review phase** — the reviewer model examines all files, runs tests, and writes either `SHIP` (approve) or `REVISE` (with feedback).
-3. If `REVISE`, the feedback is passed to the next iteration. If `SHIP`, the loop exits successfully.
+1. **Loop steps** — each step runs `claude` with its configured prompts and model.
+2. After all steps, the verdict is read from `.ralphkit/review-result.md`.
+3. **SHIP** → exit successfully. **REVISE** → feedback is preserved for the next iteration.
+
+The cleanup phase always runs (even if the loop exits with an error), similar to a `finally` block.
 
 ## State Files
 
@@ -122,7 +150,7 @@ State is persisted in `.ralphkit/` in the current working directory so each stat
 | `work-complete.md` | Created when the worker thinks it's done |
 | `review-result.md` | `SHIP` or `REVISE` |
 | `review-feedback.md` | Specific feedback from the reviewer |
-| `RALPH-BLOCKED.md` | Created by the worker if it cannot proceed |
+| `RALPH-BLOCKED.md` | Created by a step if it cannot proceed |
 
 ## Requirements
 
