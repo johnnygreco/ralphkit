@@ -7,7 +7,6 @@ from ralphkit.config import (
     STATE_DIR,
     VERDICT_REVISE,
     VERDICT_SHIP,
-    RalphConfig,
     StepConfig,
     load_config,
     resolve_model,
@@ -228,7 +227,9 @@ def main() -> None:
         # ── Max iterations reached ──────────────────────────────────
         print()
         print(f"{RED}{'=' * 59}{NC}")
-        print(f"{RED}  Max iterations ({config.max_iterations}) reached without SHIP.{NC}")
+        print(
+            f"{RED}  Max iterations ({config.max_iterations}) reached without SHIP.{NC}"
+        )
         print(f"{RED}{'=' * 59}{NC}")
         print()
         sys.exit(1)

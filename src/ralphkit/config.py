@@ -36,9 +36,7 @@ def _parse_steps(raw: list[dict], section: str) -> list[StepConfig]:
     for i, entry in enumerate(raw):
         for key in ("step_name", "task_prompt", "system_prompt"):
             if key not in entry:
-                raise ValueError(
-                    f"{section}[{i}] is missing required field '{key}'"
-                )
+                raise ValueError(f"{section}[{i}] is missing required field '{key}'")
         steps.append(
             StepConfig(
                 step_name=entry["step_name"],
@@ -78,9 +76,7 @@ def load_config(path: str | Path | None) -> RalphConfig:
 
     max_iterations = int(data["max_iterations"])
     if max_iterations < 1:
-        raise ValueError(
-            f"max_iterations must be >= 1, got {max_iterations}"
-        )
+        raise ValueError(f"max_iterations must be >= 1, got {max_iterations}")
 
     loop_steps = _parse_steps(data["loop"], "loop")
     if not loop_steps:
