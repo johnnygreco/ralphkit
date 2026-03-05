@@ -2,7 +2,7 @@
 
 A step-based pipeline for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Define setup, loop, and cleanup phases in a YAML config. The loop iterates until the reviewer says **SHIP** or max iterations are reached.
 
-Inspired by [Goose's Ralph pattern](https://block.github.io/goose/docs/tutorials/ralph-loop).
+Inspired by the [ralph loop](https://ghuntley.com/loop/).
 
 ## Install
 
