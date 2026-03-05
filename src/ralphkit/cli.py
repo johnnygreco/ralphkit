@@ -1,6 +1,6 @@
 import argparse
 import sys
-from dataclasses import replace
+from dataclasses import fields, replace
 from pathlib import Path
 
 from ralphkit.config import VERDICT_REVISE, VERDICT_SHIP, RalphConfig, load_config
@@ -35,13 +35,14 @@ def resolve_task(raw: str) -> str:
 def merge_config(config: RalphConfig, args: argparse.Namespace) -> RalphConfig:
     """Overlay explicit CLI args on top of config values."""
     overrides = {}
-    if args.worker_model is not None:
-        overrides["worker_model"] = args.worker_model
-    if args.reviewer_model is not None:
-        overrides["reviewer_model"] = args.reviewer_model
-    if args.max_iterations is not None:
-        overrides["max_iterations"] = args.max_iterations
-    return replace(config, **overrides) if overrides else config
+    for f in fields(RalphConfig):
+        value = getattr(args, f.name, None)
+        if value is not None:
+            overrides[f.name] = value
+    merged = replace(config, **overrides) if overrides else config
+    if merged.max_iterations < 1:
+        raise ValueError(f"max_iterations must be >= 1, got {merged.max_iterations}")
+    return merged
 
 
 def main() -> None:
@@ -74,6 +75,31 @@ def main() -> None:
         help="Max work/review cycles (default: 10)",
     )
     parser.add_argument(
+        "--worker-system-prompt",
+        default=None,
+        help="Override the worker system prompt entirely",
+    )
+    parser.add_argument(
+        "--reviewer-system-prompt",
+        default=None,
+        help="Override the reviewer system prompt entirely",
+    )
+    parser.add_argument(
+        "--worker-user-prompt",
+        default=None,
+        help="Override the worker user prompt (use {iteration} for iteration number)",
+    )
+    parser.add_argument(
+        "--reviewer-user-prompt",
+        default=None,
+        help="Override the reviewer user prompt",
+    )
+    parser.add_argument(
+        "--append-system-prompt",
+        default=None,
+        help="Extra text appended to both worker and reviewer system prompts",
+    )
+    parser.add_argument(
         "-y",
         "--yes",
         action="store_true",
@@ -81,8 +107,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    config = load_config(args.config)
-    config = merge_config(config, args)
+    try:
+        config = load_config(args.config)
+        config = merge_config(config, args)
+    except ValueError as e:
+        print(f"{RED}Config error: {e}{NC}", file=sys.stderr)
+        sys.exit(1)
     task_content = resolve_task(args.task)
 
     state = StateDir()
@@ -116,6 +146,15 @@ def main() -> None:
             sys.exit(1)
         print()
 
+    # ── Build prompts ──────────────────────────────────────────────────
+    worker_sp = config.worker_system_prompt or WORKER_SYSTEM_PROMPT
+    reviewer_sp = config.reviewer_system_prompt or REVIEWER_SYSTEM_PROMPT
+    if config.append_system_prompt:
+        worker_sp += "\n\n" + config.append_system_prompt
+        reviewer_sp += "\n\n" + config.append_system_prompt
+    worker_up_template = config.worker_user_prompt
+    reviewer_up = config.reviewer_user_prompt or reviewer_user_prompt()
+
     # ── Main loop ───────────────────────────────────────────────────
     for i in range(1, config.max_iterations + 1):
         print(f"{BLUE}{'-' * 59}{NC}")
@@ -127,7 +166,16 @@ def main() -> None:
 
         # ── Work phase ──────────────────────────────────────────────
         print(f"  {YELLOW}Work phase ({config.worker_model})...{NC}")
-        run_claude(worker_user_prompt(i), config.worker_model, WORKER_SYSTEM_PROMPT)
+        w_up = (
+            worker_up_template.format(iteration=i)
+            if worker_up_template
+            else worker_user_prompt(i)
+        )
+        try:
+            run_claude(w_up, config.worker_model, worker_sp)
+        except RuntimeError as e:
+            print(f"\n{RED}Error: {e}{NC}", file=sys.stderr)
+            sys.exit(1)
         print(f"  {GREEN}   Done.{NC}")
 
         # Check for blocked state
@@ -149,16 +197,18 @@ def main() -> None:
 
         # ── Review phase ────────────────────────────────────────────
         print(f"  {YELLOW}Review phase ({config.reviewer_model})...{NC}")
-        run_claude(
-            reviewer_user_prompt(), config.reviewer_model, REVIEWER_SYSTEM_PROMPT
-        )
+        try:
+            run_claude(reviewer_up, config.reviewer_model, reviewer_sp)
+        except RuntimeError as e:
+            print(f"\n{RED}Error: {e}{NC}", file=sys.stderr)
+            sys.exit(1)
         print(f"  {GREEN}   Done.{NC}")
         print()
 
         # ── Check review result ─────────────────────────────────────
         result = state.read_review_result()
         if result is None:
-            print(f"{RED}Review failed: no review-result.txt produced.{NC}")
+            print(f"{RED}Review failed: no review-result.md produced.{NC}")
             sys.exit(1)
 
         if result == VERDICT_SHIP:

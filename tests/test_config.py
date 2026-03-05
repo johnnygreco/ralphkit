@@ -32,11 +32,19 @@ def test_load_config_partial(tmp_path):
     assert config.max_iterations == 5
 
 
-def test_load_config_ignores_unknown_keys(tmp_path):
+def test_load_config_warns_unknown_keys(tmp_path, capsys):
     cfg_file = tmp_path / "ralph.yaml"
     cfg_file.write_text("worker_model: haiku\ntask: do stuff\n")
     config = load_config(cfg_file)
     assert config.worker_model == "haiku"
+    assert "unknown config keys ignored: task" in capsys.readouterr().err
+
+
+def test_load_config_invalid_max_iterations(tmp_path):
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text("max_iterations: 0\n")
+    with pytest.raises(ValueError, match="max_iterations must be >= 1"):
+        load_config(cfg_file)
 
 
 def test_resolve_task_string():
@@ -56,7 +64,14 @@ def test_resolve_task_missing_md():
 def test_merge_config_no_overrides():
     config = RalphConfig(worker_model="haiku", max_iterations=5)
     args = argparse.Namespace(
-        worker_model=None, reviewer_model=None, max_iterations=None
+        worker_model=None,
+        reviewer_model=None,
+        max_iterations=None,
+        worker_system_prompt=None,
+        reviewer_system_prompt=None,
+        worker_user_prompt=None,
+        reviewer_user_prompt=None,
+        append_system_prompt=None,
     )
     result = merge_config(config, args)
     assert result == config
@@ -65,9 +80,23 @@ def test_merge_config_no_overrides():
 def test_merge_config_cli_overrides():
     config = RalphConfig()
     args = argparse.Namespace(
-        worker_model="haiku", reviewer_model=None, max_iterations=3
+        worker_model="haiku",
+        reviewer_model=None,
+        max_iterations=3,
+        worker_system_prompt=None,
+        reviewer_system_prompt=None,
+        worker_user_prompt=None,
+        reviewer_user_prompt=None,
+        append_system_prompt=None,
     )
     result = merge_config(config, args)
     assert result.worker_model == "haiku"
     assert result.reviewer_model == "sonnet"
     assert result.max_iterations == 3
+
+
+def test_merge_config_invalid_max_iterations():
+    config = RalphConfig()
+    args = argparse.Namespace(max_iterations=0)
+    with pytest.raises(ValueError, match="max_iterations must be >= 1"):
+        merge_config(config, args)

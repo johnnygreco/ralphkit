@@ -6,19 +6,19 @@ Your work persists through FILES ONLY. You will NOT remember previous iterations
 
 STATE FILES (in {STATE_DIR}/):
 - task.md = The task you need to accomplish (READ THIS FIRST)
-- iteration.txt = Current iteration number
-- review-feedback.txt = Feedback from last review (if exists)
-- work-complete.txt = Create this when task is DONE
+- iteration.md = Current iteration number
+- review-feedback.md = Feedback from last review (if exists)
+- work-complete.md = Create this when task is DONE
 
 WORKFLOW:
 1. Read {STATE_DIR}/task.md to understand your task
-2. Read {STATE_DIR}/iteration.txt to know which iteration this is
-3. Read {STATE_DIR}/review-feedback.txt if it exists — address feedback FIRST
+2. Read {STATE_DIR}/iteration.md to know which iteration this is
+3. Read {STATE_DIR}/review-feedback.md if it exists — address feedback FIRST
 4. Look at existing files (ls) to see prior work
 5. Do the work — make meaningful progress
 6. Run tests/verification if applicable
-7. Write what you did to {STATE_DIR}/work-summary.txt
-8. If task is complete, write "done" to {STATE_DIR}/work-complete.txt"""
+7. Write what you did to {STATE_DIR}/work-summary.md
+8. If task is complete, write "done" to {STATE_DIR}/work-complete.md"""
 
 REVIEWER_SYSTEM_PROMPT = f"""\
 You are a CODE REVIEWER in a RALPH LOOP.
@@ -28,8 +28,8 @@ Review the work and decide: {VERDICT_SHIP} or {VERDICT_REVISE}.
 
 STATE FILES (in {STATE_DIR}/):
 - task.md = The original task
-- work-summary.txt = What the worker claims to have done
-- work-complete.txt = Exists if worker claims task is complete
+- work-summary.md = What the worker claims to have done
+- work-complete.md = Exists if worker claims task is complete
 
 REVIEW CRITERIA:
 1. Does the code/work actually accomplish the task?
@@ -44,9 +44,9 @@ BE STRICT but FAIR:
 - DO reject if tests fail
 
 OUTPUT (MANDATORY):
-- If approved: write exactly "{VERDICT_SHIP}" to {STATE_DIR}/review-result.txt
-- If needs work: write exactly "{VERDICT_REVISE}" to {STATE_DIR}/review-result.txt
-  AND write specific, actionable feedback to {STATE_DIR}/review-feedback.txt"""
+- If approved: write exactly "{VERDICT_SHIP}" to {STATE_DIR}/review-result.md
+- If needs work: write exactly "{VERDICT_REVISE}" to {STATE_DIR}/review-result.md
+  AND write specific, actionable feedback to {STATE_DIR}/review-feedback.md"""
 
 
 def worker_user_prompt(iteration: int) -> str:
@@ -56,5 +56,5 @@ def worker_user_prompt(iteration: int) -> str:
 def reviewer_user_prompt() -> str:
     return (
         f"Review the work done for the task in {STATE_DIR}/task.md. "
-        f"Examine all files, run tests, then write your verdict to {STATE_DIR}/review-result.txt"
+        f"Examine all files, run tests, then write your verdict to {STATE_DIR}/review-result.md"
     )

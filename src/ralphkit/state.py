@@ -12,10 +12,10 @@ class StateDir:
 
     def clean(self) -> None:
         for name in [
-            "review-result.txt",
-            "review-feedback.txt",
-            "work-summary.txt",
-            "work-complete.txt",
+            "review-result.md",
+            "review-feedback.md",
+            "work-summary.md",
+            "work-complete.md",
             "RALPH-BLOCKED.md",
         ]:
             (self.path / name).unlink(missing_ok=True)
@@ -24,7 +24,7 @@ class StateDir:
         (self.path / "task.md").write_text(content)
 
     def write_iteration(self, n: int) -> None:
-        (self.path / "iteration.txt").write_text(str(n))
+        (self.path / "iteration.md").write_text(str(n))
 
     def _read(self, name: str, strip: bool = False) -> str | None:
         try:
@@ -34,17 +34,17 @@ class StateDir:
             return None
 
     def read_review_result(self) -> str | None:
-        return self._read("review-result.txt", strip=True)
+        return self._read("review-result.md", strip=True)
 
     def read_work_summary(self) -> str | None:
-        return self._read("work-summary.txt")
+        return self._read("work-summary.md")
 
     def read_review_feedback(self) -> str | None:
-        return self._read("review-feedback.txt")
+        return self._read("review-feedback.md")
 
     def is_blocked(self) -> str | None:
         return self._read("RALPH-BLOCKED.md")
 
     def clean_for_next_iteration(self) -> None:
-        for name in ["work-complete.txt", "review-result.txt", "work-summary.txt"]:
+        for name in ["work-complete.md", "review-result.md", "work-summary.md"]:
             (self.path / name).unlink(missing_ok=True)

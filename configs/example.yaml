@@ -1,0 +1,15 @@
+worker_model: opus
+reviewer_model: sonnet
+max_iterations: 10
+
+# Optional: override system prompts entirely
+# worker_system_prompt: "Your custom worker instructions..."
+# reviewer_system_prompt: "Your custom reviewer instructions..."
+
+# Optional: override user prompts (the -p argument to claude)
+# worker_user_prompt uses {iteration} as a placeholder for the current iteration number
+# worker_user_prompt: "Begin iteration {iteration}. Read .ralphkit/task.md and start working."
+# reviewer_user_prompt: "Review the work and write your verdict."
+
+# Optional: append extra instructions to both worker and reviewer system prompts
+# append_system_prompt: "Always use pytest. Never modify the README."

@@ -31,7 +31,7 @@ ralph-loop "Create a Python function in prime.py that checks if a number is prim
 ## Usage
 
 ```
-ralph-loop TASK [--config PATH] [--worker-model MODEL] [--reviewer-model MODEL] [--max-iterations N] [-y]
+ralph-loop TASK [OPTIONS]
 ```
 
 **Arguments:**
@@ -43,6 +43,11 @@ ralph-loop TASK [--config PATH] [--worker-model MODEL] [--reviewer-model MODEL] 
 | `--worker-model` | Model for the work phase | `opus` |
 | `--reviewer-model` | Model for the review phase | `sonnet` |
 | `--max-iterations` | Max work/review cycles | `10` |
+| `--worker-system-prompt` | Override the worker system prompt entirely | built-in |
+| `--reviewer-system-prompt` | Override the reviewer system prompt entirely | built-in |
+| `--worker-user-prompt` | Override the worker user prompt (`{iteration}` is substituted) | built-in |
+| `--reviewer-user-prompt` | Override the reviewer user prompt | built-in |
+| `--append-system-prompt` | Extra text appended to both system prompts | none |
 | `-y` / `--yes` | Skip confirmation prompt | off |
 
 **Examples:**
@@ -73,6 +78,17 @@ A config file is optional. When provided via `--config`, its values serve as def
 worker_model: opus
 reviewer_model: sonnet
 max_iterations: 10
+
+# Optional: override system prompts entirely
+# worker_system_prompt: "Your custom worker instructions..."
+# reviewer_system_prompt: "Your custom reviewer instructions..."
+
+# Optional: override user prompts (the -p argument to claude)
+# worker_user_prompt: "Begin iteration {iteration}. Read .ralphkit/task.md and start."
+# reviewer_user_prompt: "Review the work and write your verdict."
+
+# Optional: append extra instructions to both system prompts
+# append_system_prompt: "Always use pytest. Never modify the README."
 ```
 
 Resolution order: built-in defaults → config file → CLI args.
@@ -101,11 +117,12 @@ State is persisted in `.ralphkit/` in the current working directory so each stat
 | File | Purpose |
 |------|---------|
 | `task.md` | The task description |
-| `iteration.txt` | Current iteration number |
-| `work-summary.txt` | What the worker did this iteration |
-| `work-complete.txt` | Created when the worker thinks it's done |
-| `review-result.txt` | `SHIP` or `REVISE` |
-| `review-feedback.txt` | Specific feedback from the reviewer |
+| `iteration.md` | Current iteration number |
+| `work-summary.md` | What the worker did this iteration |
+| `work-complete.md` | Created when the worker thinks it's done |
+| `review-result.md` | `SHIP` or `REVISE` |
+| `review-feedback.md` | Specific feedback from the reviewer |
+| `RALPH-BLOCKED.md` | Created by the worker if it cannot proceed |
 
 ## Requirements
 
