@@ -1,21 +1,67 @@
-import argparse
-
 import pytest
 
-from ralphkit.cli import merge_config, resolve_task
-from ralphkit.config import RalphConfig, load_config
+from ralphkit.cli import resolve_task
+from ralphkit.config import StepConfig, load_config, resolve_model
 
 
-def test_default_config():
-    config = RalphConfig()
-    assert config.worker_model == "opus"
-    assert config.reviewer_model == "sonnet"
-    assert config.max_iterations == 10
+def test_load_config_valid_full(tmp_path):
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+max_iterations: 5
+default_model: opus
+
+setup:
+  - step_name: init
+    task_prompt: "Initialize the project"
+    system_prompt: "You are a setup agent."
+
+loop:
+  - step_name: worker
+    task_prompt: "Do work on iteration {iteration}."
+    system_prompt: "You are a worker."
+    model: opus
+  - step_name: reviewer
+    task_prompt: "Review the work."
+    system_prompt: "You are a reviewer."
+    model: sonnet
+
+cleanup:
+  - step_name: finalize
+    task_prompt: "Clean up."
+    system_prompt: "You are a cleanup agent."
+"""
+    )
+    config = load_config(cfg_file)
+    assert config.max_iterations == 5
+    assert config.default_model == "opus"
+    assert len(config.setup) == 1
+    assert config.setup[0].step_name == "init"
+    assert len(config.loop) == 2
+    assert config.loop[0].model == "opus"
+    assert config.loop[1].model == "sonnet"
+    assert len(config.cleanup) == 1
 
 
-def test_load_config_none():
-    config = load_config(None)
-    assert config == RalphConfig()
+def test_load_config_loop_only(tmp_path):
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+max_iterations: 3
+default_model: haiku
+
+loop:
+  - step_name: worker
+    task_prompt: "Work."
+    system_prompt: "System."
+"""
+    )
+    config = load_config(cfg_file)
+    assert config.max_iterations == 3
+    assert config.default_model == "haiku"
+    assert len(config.loop) == 1
+    assert config.setup == []
+    assert config.cleanup == []
 
 
 def test_load_config_missing_file(tmp_path):
@@ -23,21 +69,91 @@ def test_load_config_missing_file(tmp_path):
         load_config(tmp_path / "nonexistent.yaml")
 
 
-def test_load_config_partial(tmp_path):
+def test_load_config_missing_loop(tmp_path):
     cfg_file = tmp_path / "ralph.yaml"
-    cfg_file.write_text("worker_model: haiku\nmax_iterations: 5\n")
-    config = load_config(cfg_file)
-    assert config.worker_model == "haiku"
-    assert config.reviewer_model == "sonnet"
-    assert config.max_iterations == 5
+    cfg_file.write_text("max_iterations: 5\ndefault_model: opus\n")
+    with pytest.raises(ValueError, match="missing required key 'loop'"):
+        load_config(cfg_file)
+
+
+def test_load_config_missing_default_model(tmp_path):
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+max_iterations: 5
+loop:
+  - step_name: worker
+    task_prompt: "Work."
+    system_prompt: "System."
+"""
+    )
+    with pytest.raises(ValueError, match="missing required key 'default_model'"):
+        load_config(cfg_file)
 
 
 def test_load_config_warns_unknown_keys(tmp_path, capsys):
     cfg_file = tmp_path / "ralph.yaml"
-    cfg_file.write_text("worker_model: haiku\ntask: do stuff\n")
-    config = load_config(cfg_file)
-    assert config.worker_model == "haiku"
-    assert "unknown config keys ignored: task" in capsys.readouterr().err
+    cfg_file.write_text(
+        """\
+max_iterations: 5
+default_model: opus
+bogus_key: hello
+loop:
+  - step_name: worker
+    task_prompt: "Work."
+    system_prompt: "System."
+"""
+    )
+    load_config(cfg_file)
+    assert "unknown config keys ignored: bogus_key" in capsys.readouterr().err
+
+
+def test_step_missing_required_fields(tmp_path):
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+max_iterations: 5
+default_model: opus
+loop:
+  - step_name: worker
+    task_prompt: "Work."
+"""
+    )
+    with pytest.raises(ValueError, match="missing required field 'system_prompt'"):
+        load_config(cfg_file)
+
+
+def test_load_config_invalid_max_iterations(tmp_path):
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+max_iterations: 0
+default_model: opus
+loop:
+  - step_name: worker
+    task_prompt: "Work."
+    system_prompt: "System."
+"""
+    )
+    with pytest.raises(ValueError, match="max_iterations must be >= 1"):
+        load_config(cfg_file)
+
+
+def test_load_config_none():
+    with pytest.raises(ValueError, match="config file is required"):
+        load_config(None)
+
+
+def test_resolve_model_fallback():
+    step = StepConfig(step_name="test", task_prompt="p", system_prompt="s")
+    assert resolve_model(step, "opus") == "opus"
+
+
+def test_resolve_model_override():
+    step = StepConfig(
+        step_name="test", task_prompt="p", system_prompt="s", model="haiku"
+    )
+    assert resolve_model(step, "opus") == "haiku"
 
 
 def test_resolve_task_string():
@@ -52,44 +168,3 @@ def test_resolve_task_md_file(tmp_path):
 
 def test_resolve_task_missing_md():
     assert resolve_task("nonexistent.md") == "nonexistent.md"
-
-
-def test_merge_config_no_overrides():
-    config = RalphConfig(worker_model="haiku", max_iterations=5)
-    args = argparse.Namespace(
-        worker_model=None,
-        reviewer_model=None,
-        max_iterations=None,
-        worker_system_prompt=None,
-        reviewer_system_prompt=None,
-        worker_user_prompt=None,
-        reviewer_user_prompt=None,
-        append_system_prompt=None,
-    )
-    result = merge_config(config, args)
-    assert result == config
-
-
-def test_merge_config_cli_overrides():
-    config = RalphConfig()
-    args = argparse.Namespace(
-        worker_model="haiku",
-        reviewer_model=None,
-        max_iterations=3,
-        worker_system_prompt=None,
-        reviewer_system_prompt=None,
-        worker_user_prompt=None,
-        reviewer_user_prompt=None,
-        append_system_prompt=None,
-    )
-    result = merge_config(config, args)
-    assert result.worker_model == "haiku"
-    assert result.reviewer_model == "sonnet"
-    assert result.max_iterations == 3
-
-
-def test_merge_config_invalid_max_iterations():
-    config = RalphConfig()
-    args = argparse.Namespace(max_iterations=0)
-    with pytest.raises(ValueError, match="max_iterations must be >= 1"):
-        merge_config(config, args)

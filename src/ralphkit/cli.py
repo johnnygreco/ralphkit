@@ -1,14 +1,16 @@
 import argparse
 import sys
-from dataclasses import fields, replace
+from dataclasses import replace
 from pathlib import Path
 
-from ralphkit.config import VERDICT_REVISE, VERDICT_SHIP, RalphConfig, load_config
-from ralphkit.prompts import (
-    REVIEWER_SYSTEM_PROMPT,
-    WORKER_SYSTEM_PROMPT,
-    reviewer_user_prompt,
-    worker_user_prompt,
+from ralphkit.config import (
+    STATE_DIR,
+    VERDICT_REVISE,
+    VERDICT_SHIP,
+    RalphConfig,
+    StepConfig,
+    load_config,
+    resolve_model,
 )
 from ralphkit.runner import run_claude
 from ralphkit.state import StateDir
@@ -41,22 +43,23 @@ def resolve_task(raw: str) -> str:
     return raw
 
 
-def merge_config(config: RalphConfig, args: argparse.Namespace) -> RalphConfig:
-    """Overlay explicit CLI args on top of config values."""
-    overrides = {}
-    for f in fields(RalphConfig):
-        value = getattr(args, f.name, None)
-        if value is not None:
-            overrides[f.name] = value
-    merged = replace(config, **overrides) if overrides else config
-    if merged.max_iterations < 1:
-        raise ValueError(f"max_iterations must be >= 1, got {merged.max_iterations}")
-    return merged
+def _render_prompt(template: str, variables: dict[str, str]) -> str:
+    """Render a prompt template with safe substitution (unrecognized keys left as-is)."""
+
+    class SafeDict(dict):
+        def __missing__(self, key):
+            return "{" + key + "}"
+
+    return template.format_map(SafeDict(variables))
+
+
+def _step_names(steps: list[StepConfig]) -> str:
+    return ", ".join(s.step_name for s in steps) if steps else "(none)"
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Iterative work/review loop for Claude Code",
+        description="Iterative step-based pipeline for Claude Code",
     )
     parser.add_argument(
         "task",
@@ -64,53 +67,18 @@ def main() -> None:
     )
     parser.add_argument(
         "--config",
-        default=None,
-        help="Path to YAML config file (only loaded when explicitly provided)",
-    )
-    parser.add_argument(
-        "--worker-model",
-        default=None,
-        help="Model for work phase (default: opus)",
-    )
-    parser.add_argument(
-        "--reviewer-model",
-        default=None,
-        help="Model for review phase (default: sonnet)",
+        required=True,
+        help="Path to YAML config file",
     )
     parser.add_argument(
         "--max-iterations",
         type=int,
         default=None,
-        help="Max work/review cycles (default: 10)",
+        help="Override max iterations from config",
     )
     parser.add_argument(
-        "--worker-system-prompt",
-        default=None,
-        help="Override the worker system prompt entirely",
-    )
-    parser.add_argument(
-        "--reviewer-system-prompt",
-        default=None,
-        help="Override the reviewer system prompt entirely",
-    )
-    parser.add_argument(
-        "--worker-user-prompt",
-        default=None,
-        help="Override the worker user prompt (use {iteration} for iteration number)",
-    )
-    parser.add_argument(
-        "--reviewer-user-prompt",
-        default=None,
-        help="Override the reviewer user prompt",
-    )
-    parser.add_argument(
-        "--append-system-prompt",
-        default=None,
-        help="Extra text appended to both worker and reviewer system prompts",
-    )
-    parser.add_argument(
-        "-y",
-        "--yes",
+        "-f",
+        "--force",
         action="store_true",
         help="Skip confirmation prompt",
     )
@@ -118,10 +86,19 @@ def main() -> None:
 
     try:
         config = load_config(args.config)
-        config = merge_config(config, args)
     except ValueError as e:
         print(f"{RED}Config error: {e}{NC}", file=sys.stderr)
         sys.exit(1)
+
+    if args.max_iterations is not None:
+        if args.max_iterations < 1:
+            print(
+                f"{RED}Config error: max_iterations must be >= 1, got {args.max_iterations}{NC}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        config = replace(config, max_iterations=args.max_iterations)
+
     task_content = resolve_task(args.task)
 
     state = StateDir()
@@ -136,18 +113,20 @@ def main() -> None:
     print(f"{BLUE}  RALPH LOOP{NC}")
     print(f"{BLUE}{'=' * 59}{NC}")
     print()
-    print(f"  {YELLOW}Task:{NC}     {first_line}")
-    print(f"  {YELLOW}Worker:{NC}   {config.worker_model}")
-    print(f"  {YELLOW}Reviewer:{NC} {config.reviewer_model}")
-    print(f"  {YELLOW}Max iter:{NC} {config.max_iterations}")
+    print(f"  {YELLOW}Task:{NC}      {first_line}")
+    print(f"  {YELLOW}Model:{NC}     {config.default_model}")
+    print(f"  {YELLOW}Max iter:{NC}  {config.max_iterations}")
+    print(f"  {YELLOW}Setup:{NC}     {_step_names(config.setup)}")
+    print(f"  {YELLOW}Loop:{NC}      {_step_names(config.loop)}")
+    print(f"  {YELLOW}Cleanup:{NC}   {_step_names(config.cleanup)}")
     print()
 
     # ── Confirmation ────────────────────────────────────────────────
-    if not args.yes:
+    if not args.force:
         print(
-            f"{YELLOW}Warning: This will run up to {config.max_iterations} iterations using two AI models.{NC}"
+            f"{YELLOW}Warning: This will run up to {config.max_iterations} iterations.{NC}"
         )
-        print(f"{YELLOW}   Each iteration costs API credits.{NC}")
+        print(f"{YELLOW}   Each step costs API credits.{NC}")
         print()
         confirm = input("Proceed? (y/N) ").strip()
         if confirm.lower() not in ("y", "yes"):
@@ -155,87 +134,111 @@ def main() -> None:
             sys.exit(1)
         print()
 
-    # ── Build prompts ──────────────────────────────────────────────────
-    worker_sp = config.worker_system_prompt or WORKER_SYSTEM_PROMPT
-    reviewer_sp = config.reviewer_system_prompt or REVIEWER_SYSTEM_PROMPT
-    if config.append_system_prompt:
-        worker_sp += "\n\n" + config.append_system_prompt
-        reviewer_sp += "\n\n" + config.append_system_prompt
-    worker_up_template = config.worker_user_prompt
-    reviewer_up = config.reviewer_user_prompt or reviewer_user_prompt()
+    # ── Common template variables ───────────────────────────────────
+    def _base_vars(step: StepConfig) -> dict[str, str]:
+        return {
+            "step_name": step.step_name,
+            "max_iterations": str(config.max_iterations),
+            "default_model": config.default_model,
+            "model": resolve_model(step, config.default_model),
+            "state_dir": STATE_DIR,
+        }
 
-    # ── Main loop ───────────────────────────────────────────────────
-    for i in range(1, config.max_iterations + 1):
-        print(f"{BLUE}{'-' * 59}{NC}")
-        print(f"{BLUE}  Iteration {i} / {config.max_iterations}{NC}")
-        print(f"{BLUE}{'-' * 59}{NC}")
+    def _run_step(step: StepConfig, extra_vars: dict[str, str] | None = None) -> str:
+        """Run a step and return the resolved model name."""
+        variables = _base_vars(step)
+        if extra_vars:
+            variables.update(extra_vars)
+        prompt = _render_prompt(step.task_prompt, variables)
+        system = _render_prompt(step.system_prompt, variables)
+        model = variables["model"]
+        _run_phase(prompt, model, system)
+        return model
+
+    # ── SETUP phase ─────────────────────────────────────────────────
+    if config.setup:
+        print(f"{BLUE}── Setup ──{NC}")
+        for step in config.setup:
+            print(f"  {YELLOW}{step.step_name}...{NC}")
+            _run_step(step)
+            print(f"  {GREEN}   Done.{NC}")
         print()
 
-        state.write_iteration(i)
-
-        # ── Work phase ──────────────────────────────────────────────
-        print(f"  {YELLOW}Work phase ({config.worker_model})...{NC}")
-        w_up = (
-            worker_up_template.format(iteration=i)
-            if worker_up_template
-            else worker_user_prompt(i)
-        )
-        _run_phase(w_up, config.worker_model, worker_sp)
-        print(f"  {GREEN}   Done.{NC}")
-
-        # Check for blocked state
-        blocked = state.is_blocked()
-        if blocked:
-            print()
-            print(f"{RED}Worker is BLOCKED:{NC}")
-            print(blocked)
-            sys.exit(1)
-
-        # Show work summary
-        summary = state.read_work_summary()
-        if summary:
-            print()
-            print(f"  {YELLOW}   Summary:{NC}")
-            for line in summary.splitlines():
-                print(f"     {line}")
+    # ── LOOP phase (with cleanup in finally) ────────────────────────
+    try:
+        for i in range(1, config.max_iterations + 1):
+            print(f"{BLUE}{'-' * 59}{NC}")
+            print(f"{BLUE}  Iteration {i} / {config.max_iterations}{NC}")
+            print(f"{BLUE}{'-' * 59}{NC}")
             print()
 
-        # ── Review phase ────────────────────────────────────────────
-        print(f"  {YELLOW}Review phase ({config.reviewer_model})...{NC}")
-        _run_phase(reviewer_up, config.reviewer_model, reviewer_sp)
-        print(f"  {GREEN}   Done.{NC}")
-        print()
+            state.write_iteration(i)
 
-        # ── Check review result ─────────────────────────────────────
-        result = state.read_review_result()
-        if result is None:
-            print(f"{RED}Review failed: no review-result.md produced.{NC}")
-            sys.exit(1)
+            loop_vars = {"iteration": str(i)}
 
-        if result == VERDICT_SHIP:
-            print(f"{GREEN}{'=' * 59}{NC}")
-            print(f"{GREEN}  SHIP — Task completed in {i} iteration(s)!{NC}")
-            print(f"{GREEN}{'=' * 59}{NC}")
-            print()
-            sys.exit(0)
-        elif result == VERDICT_REVISE:
-            print(f"  {YELLOW}REVISE — Reviewer wants changes.{NC}")
-            feedback = state.read_review_feedback()
-            if feedback:
+            for step in config.loop:
+                step_model = resolve_model(step, config.default_model)
+                print(f"  {YELLOW}{step.step_name} ({step_model})...{NC}")
+                _run_step(step, loop_vars)
+                print(f"  {GREEN}   Done.{NC}")
+
+                # Check for blocked state after each step
+                blocked = state.is_blocked()
+                if blocked:
+                    print()
+                    print(f"{RED}Blocked:{NC}")
+                    print(blocked)
+                    sys.exit(1)
+
+            # Show work summary if present
+            summary = state.read_work_summary()
+            if summary:
                 print()
-                print(f"  {YELLOW}   Feedback:{NC}")
-                for line in feedback.splitlines():
+                print(f"  {YELLOW}   Summary:{NC}")
+                for line in summary.splitlines():
                     print(f"     {line}")
                 print()
-            state.clean_for_next_iteration()
-        else:
-            print(f"{RED}Unexpected review result: '{result}'{NC}")
-            sys.exit(1)
 
-    # ── Max iterations reached ──────────────────────────────────────
-    print()
-    print(f"{RED}{'=' * 59}{NC}")
-    print(f"{RED}  Max iterations ({config.max_iterations}) reached without SHIP.{NC}")
-    print(f"{RED}{'=' * 59}{NC}")
-    print()
-    sys.exit(1)
+            # ── Check review result ─────────────────────────────────
+            result = state.read_review_result()
+            if result is None:
+                print(f"{RED}Review failed: no review-result.md produced.{NC}")
+                sys.exit(1)
+
+            if result == VERDICT_SHIP:
+                print(f"{GREEN}{'=' * 59}{NC}")
+                print(f"{GREEN}  SHIP — Task completed in {i} iteration(s)!{NC}")
+                print(f"{GREEN}{'=' * 59}{NC}")
+                print()
+                sys.exit(0)
+            elif result == VERDICT_REVISE:
+                print(f"  {YELLOW}REVISE — Reviewer wants changes.{NC}")
+                feedback = state.read_review_feedback()
+                if feedback:
+                    print()
+                    print(f"  {YELLOW}   Feedback:{NC}")
+                    for line in feedback.splitlines():
+                        print(f"     {line}")
+                    print()
+                state.clean_for_next_iteration()
+            else:
+                print(f"{RED}Unexpected review result: '{result}'{NC}")
+                sys.exit(1)
+
+        # ── Max iterations reached ──────────────────────────────────
+        print()
+        print(f"{RED}{'=' * 59}{NC}")
+        print(f"{RED}  Max iterations ({config.max_iterations}) reached without SHIP.{NC}")
+        print(f"{RED}{'=' * 59}{NC}")
+        print()
+        sys.exit(1)
+    finally:
+        # ── CLEANUP phase (always runs) ─────────────────────────────
+        if config.cleanup:
+            print()
+            print(f"{BLUE}── Cleanup ──{NC}")
+            for step in config.cleanup:
+                print(f"  {YELLOW}{step.step_name}...{NC}")
+                _run_step(step)
+                print(f"  {GREEN}   Done.{NC}")
+            print()
