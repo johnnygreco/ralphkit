@@ -1,14 +1,99 @@
+import os
 from pathlib import Path
 
 from ralphkit.config import STATE_DIR
 
+# State files that live inside a run directory
+_STATE_FILES = [
+    "task.md",
+    "iteration.md",
+    "review-result.md",
+    "review-feedback.md",
+    "work-summary.md",
+    "work-complete.md",
+    "RALPH-BLOCKED.md",
+]
+
 
 class StateDir:
     def __init__(self, path: str | Path = STATE_DIR):
-        self.path = Path(path)
+        self.root = Path(path)
+        self.path = self.root  # default; overridden by setup()
+
+    @property
+    def _runs_dir(self) -> Path:
+        return self.root / "runs"
+
+    @property
+    def _current_link(self) -> Path:
+        return self.root / "current"
+
+    @property
+    def active_path(self) -> Path:
+        """Path that prompt templates should use (the 'current' symlink)."""
+        return self._current_link
+
+    def _numeric_run_dirs(self) -> list[Path]:
+        """Return all numbered run directories in sorted order."""
+        if not self._runs_dir.is_dir():
+            return []
+        dirs = []
+        for entry in self._runs_dir.iterdir():
+            if entry.is_dir():
+                try:
+                    int(entry.name)
+                    dirs.append(entry)
+                except ValueError:
+                    pass
+        dirs.sort()
+        return dirs
+
+    def _next_run_number(self) -> int:
+        dirs = self._numeric_run_dirs()
+        if not dirs:
+            return 1
+        return int(dirs[-1].name) + 1
+
+    def _create_new_run(self) -> Path:
+        num = self._next_run_number()
+        run_dir = self._runs_dir / f"{num:03d}"
+        run_dir.mkdir(parents=True)
+        return run_dir
+
+    def _update_current_link(self) -> None:
+        link = self._current_link
+        # Use relative target so the symlink works if the tree is moved
+        target = Path("runs") / self.path.name
+        try:
+            link.unlink()
+        except FileNotFoundError:
+            pass
+        os.symlink(target, link)
+
+    def _maybe_migrate_legacy(self) -> None:
+        """Move flat state files at root level into runs/001/."""
+        if self._runs_dir.is_dir():
+            return
+        legacy = [
+            (self.root / name) for name in _STATE_FILES if (self.root / name).is_file()
+        ]
+        if not legacy:
+            return
+        dest = self._runs_dir / "001"
+        dest.mkdir(parents=True)
+        for src in legacy:
+            src.rename(dest / src.name)
+
+    def list_runs(self) -> list[Path]:
+        """Return all numbered run directories in order."""
+        return self._numeric_run_dirs()
 
     def setup(self) -> None:
-        self.path.mkdir(exist_ok=True)
+        self.root.mkdir(exist_ok=True)
+        self._maybe_migrate_legacy()
+        self._runs_dir.mkdir(exist_ok=True)
+        self.path = self._create_new_run()
+        self._update_current_link()
 
     def clean(self) -> None:
         for name in [

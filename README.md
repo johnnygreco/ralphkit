@@ -50,6 +50,7 @@ ralph-loop TASK [OPTIONS]
 | `--config PATH` | Path to YAML config file | built-in defaults |
 | `--max-iterations N` | Override max iterations from config | 10 |
 | `-f` / `--force` | Skip confirmation prompt | off |
+| `--list-runs` | List previous runs and exit | off |
 
 **Examples:**
 
@@ -150,7 +151,25 @@ The cleanup phase always runs (even if the loop exits with an error), similar to
 
 ## State Files
 
-State is persisted in `.ralphkit/` in the current working directory so each stateless `claude -p` invocation can pick up where the last left off.
+Each run gets its own numbered directory under `.ralphkit/runs/`. A `current` symlink always points to the active run, so prompt templates use `{state_dir}` → `.ralphkit/current`.
+
+```
+.ralphkit/
+  current -> runs/003        # symlink to active run
+  runs/
+    001/                     # first run (preserved)
+      task.md, iteration.md, work-summary.md, ...
+    002/                     # second run (preserved)
+    003/                     # active run
+```
+
+Previous runs are preserved automatically. Use `--list-runs` to see them:
+
+```bash
+ralph-loop --list-runs
+```
+
+**Files inside each run directory:**
 
 | File | Purpose |
 |------|---------|
@@ -161,6 +180,8 @@ State is persisted in `.ralphkit/` in the current working directory so each stat
 | `review-result.md` | `SHIP` or `REVISE` |
 | `review-feedback.md` | Specific feedback from the reviewer |
 | `RALPH-BLOCKED.md` | Created by a step if it cannot proceed |
+
+If you have an existing `.ralphkit/` directory from before this feature (flat files at the root level), the first run will automatically migrate them into `runs/001/`.
 
 ## Requirements
 

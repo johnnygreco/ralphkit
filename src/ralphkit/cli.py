@@ -62,6 +62,8 @@ def main() -> None:
     )
     parser.add_argument(
         "task",
+        nargs="?",
+        default=None,
         help="Task description (string or path to .md file)",
     )
     parser.add_argument(
@@ -91,6 +93,11 @@ def main() -> None:
         action="store_true",
         help="Skip confirmation prompt",
     )
+    parser.add_argument(
+        "--list-runs",
+        action="store_true",
+        help="List previous runs and exit",
+    )
     args = parser.parse_args()
 
     try:
@@ -114,23 +121,30 @@ def main() -> None:
     if args.state_dir is not None:
         config = replace(config, state_dir=args.state_dir)
 
+    state = StateDir(config.state_dir)
+
+    # ── --list-runs early exit ─────────────────────────────────────
+    if args.list_runs:
+        runs = state.list_runs()
+        if not runs:
+            print("No runs found.")
+        else:
+            for run_dir in runs:
+                task_file = run_dir / "task.md"
+                first_line = ""
+                if task_file.is_file():
+                    first_line = task_file.read_text().split("\n", 1)[0]
+                print(f"  #{run_dir.name}  {first_line}")
+        sys.exit(0)
+
+    if args.task is None:
+        parser.error("the following arguments are required: task")
+
     task_content = resolve_task(args.task)
 
     start_time = time.time()
 
-    state = StateDir(config.state_dir)
     state.setup()
-    state.clean()
-
-    existing_task = state.read_task()
-    if existing_task and existing_task.strip() and existing_task != task_content:
-        print(
-            f"{RED}Error: {config.state_dir}/task.md already exists with different content. "
-            f"Remove it first or pass it as the task argument.{NC}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
     state.write_task(task_content)
 
     # ── Banner ──────────────────────────────────────────────────────
@@ -141,6 +155,7 @@ def main() -> None:
     print(f"{BLUE}{'=' * 59}{NC}")
     print()
     print(f"  {YELLOW}Task:{NC}      {first_line}")
+    print(f"  {YELLOW}Run:{NC}       #{state.path.name}")
     print(f"  {YELLOW}Model:{NC}     {config.default_model}")
     print(f"  {YELLOW}Max iter:{NC}  {config.max_iterations}")
     print(f"  {YELLOW}Setup:{NC}     {_step_names(config.setup)}")
@@ -168,7 +183,7 @@ def main() -> None:
             "max_iterations": str(config.max_iterations),
             "default_model": config.default_model,
             "model": resolve_model(step, config.default_model),
-            "state_dir": config.state_dir,
+            "state_dir": str(state.active_path),
         }
 
     def _run_step(step: StepConfig, extra_vars: dict[str, str] | None = None) -> str:

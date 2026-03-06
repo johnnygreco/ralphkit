@@ -1,10 +1,7 @@
 from ralphkit.state import StateDir
 
 
-def test_setup_creates_directory(tmp_path):
-    state = StateDir(tmp_path / "state")
-    state.setup()
-    assert state.path.is_dir()
+# ── Tests that use StateDir(tmp_path) without setup() ──────────────
 
 
 def test_write_and_read_task(tmp_path):
@@ -95,13 +92,6 @@ def test_clean_for_next_iteration_idempotent(tmp_path):
     state.clean_for_next_iteration()  # no files exist, should not raise
 
 
-def test_setup_idempotent(tmp_path):
-    state = StateDir(tmp_path / "state")
-    state.setup()
-    state.setup()  # second call should not raise
-    assert state.path.is_dir()
-
-
 def test_read_work_summary_returns_content(tmp_path):
     state = StateDir(tmp_path)
     (tmp_path / "work-summary.md").write_text("  summary\n")
@@ -125,6 +115,111 @@ def test_read_task_returns_none_when_missing(tmp_path):
     assert state.read_task() is None
 
 
+# ── Default path ───────────────────────────────────────────────────
+
+
 def test_default_state_dir_path():
     state = StateDir()
+    assert str(state.root) == ".ralphkit"
     assert str(state.path) == ".ralphkit"
+
+
+# ── Run directory management (setup()) ─────────────────────────────
+
+
+def test_setup_creates_runs_directory(tmp_path):
+    state = StateDir(tmp_path / "state")
+    state.setup()
+    assert (state.root / "runs").is_dir()
+    assert state.path.is_dir()
+    assert state.path.name == "001"
+
+
+def test_setup_creates_sequential_runs(tmp_path):
+    root = tmp_path / "state"
+    state1 = StateDir(root)
+    state1.setup()
+    assert state1.path.name == "001"
+
+    state2 = StateDir(root)
+    state2.setup()
+    assert state2.path.name == "002"
+
+
+def test_current_symlink_points_to_latest(tmp_path):
+    root = tmp_path / "state"
+    state = StateDir(root)
+    state.setup()
+    link = root / "current"
+    assert link.is_symlink()
+    assert link.resolve() == state.path.resolve()
+
+    # Second run updates the symlink
+    state2 = StateDir(root)
+    state2.setup()
+    assert link.resolve() == state2.path.resolve()
+
+
+def test_active_path_returns_current_link(tmp_path):
+    root = tmp_path / "state"
+    state = StateDir(root)
+    state.setup()
+    assert state.active_path == root / "current"
+
+
+def test_list_runs_returns_ordered(tmp_path):
+    root = tmp_path / "state"
+    state = StateDir(root)
+    state.setup()  # 001
+    StateDir(root).setup()  # 002
+    StateDir(root).setup()  # 003
+
+    runs = state.list_runs()
+    assert [r.name for r in runs] == ["001", "002", "003"]
+
+
+def test_list_runs_empty(tmp_path):
+    state = StateDir(tmp_path / "state")
+    assert state.list_runs() == []
+
+
+def test_legacy_migration(tmp_path):
+    """Flat state files at root level get moved into runs/001/."""
+    root = tmp_path / "state"
+    root.mkdir()
+    (root / "task.md").write_text("old task")
+    (root / "iteration.md").write_text("2")
+
+    state = StateDir(root)
+    state.setup()
+
+    # Legacy files moved to runs/001
+    assert (root / "runs" / "001" / "task.md").read_text() == "old task"
+    assert (root / "runs" / "001" / "iteration.md").read_text() == "2"
+    # Original files removed
+    assert not (root / "task.md").exists()
+    assert not (root / "iteration.md").exists()
+    # New run is 002
+    assert state.path.name == "002"
+
+
+def test_next_run_number_skips_nonnumeric(tmp_path):
+    root = tmp_path / "state"
+    runs_dir = root / "runs"
+    runs_dir.mkdir(parents=True)
+    (runs_dir / "notes").mkdir()
+    (runs_dir / "001").mkdir()
+    (runs_dir / "tmp").mkdir()
+
+    state = StateDir(root)
+    assert state._next_run_number() == 2
+
+
+def test_setup_writes_to_run_dir(tmp_path):
+    """After setup(), write_task writes into the run directory."""
+    root = tmp_path / "state"
+    state = StateDir(root)
+    state.setup()
+    state.write_task("hello")
+    assert (state.path / "task.md").read_text() == "hello"
+    assert state.path.parent == root / "runs"
