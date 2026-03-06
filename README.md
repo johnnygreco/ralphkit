@@ -49,6 +49,8 @@ ralph-loop TASK [OPTIONS]
 | `TASK` | Task description (string or path to `.md` file) | required |
 | `--config PATH` | Path to YAML config file | built-in defaults |
 | `--max-iterations N` | Override max iterations from config | 10 |
+| `--default-model MODEL` | Override default model from config | opus |
+| `--state-dir DIR` | Override state directory | .ralphkit |
 | `-f` / `--force` | Skip confirmation prompt | off |
 
 **Examples:**
@@ -72,12 +74,12 @@ ralph-loop "Build a REST API" -f
 
 ### Config file
 
-The config file is optional. Without one, ralphkit uses a built-in default loop with a worker (opus) and reviewer (sonnet) step. When a config is provided, all sections are optional — any section not specified uses defaults.
+The config file is optional. Without one, ralphkit uses a built-in default loop with a worker and reviewer step, both using `default_model` (opus). When a config is provided, all sections are optional — any section not specified uses defaults.
 
 ```yaml
 # All top-level keys are optional
 max_iterations: 10    # default: 10
-default_model: sonnet  # default: sonnet
+default_model: opus   # default: opus
 
 # Optional: runs once before the loop
 setup:
@@ -90,11 +92,10 @@ loop:
   - step_name: worker
     task_prompt: "Read {state_dir}/task.md and begin working. This is iteration {iteration} of {max_iterations}."
     system_prompt: "You are a worker in a RALPH LOOP..."
-    model: opus
   - step_name: reviewer
     task_prompt: "Review the work done for the task in {state_dir}/task.md. Read the project files, run tests, then write your verdict to {state_dir}/review-result.md"
     system_prompt: "You are a code reviewer in a RALPH LOOP..."
-    model: sonnet
+    # model: sonnet  # optional: override default_model for this step
 
 # Optional: runs once after the loop (always, even on failure)
 cleanup:

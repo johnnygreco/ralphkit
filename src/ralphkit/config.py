@@ -90,13 +90,11 @@ def _default_loop() -> list["StepConfig"]:
             step_name="worker",
             task_prompt=DEFAULT_WORKER_TASK_PROMPT,
             system_prompt=DEFAULT_WORKER_SYSTEM_PROMPT,
-            model="opus",
         ),
         StepConfig(
             step_name="reviewer",
             task_prompt=DEFAULT_REVIEWER_TASK_PROMPT,
             system_prompt=DEFAULT_REVIEWER_SYSTEM_PROMPT,
-            model="sonnet",
         ),
     ]
 

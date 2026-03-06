@@ -26,7 +26,6 @@ loop:
       7. Write a concise summary of what you did to {state_dir}/work-summary.md
       8. If the task is complete, write "done" to {state_dir}/work-complete.md
       9. If you are blocked and cannot make progress, write the reason to {state_dir}/RALPH-BLOCKED.md
-    model: opus
 
   - step_name: reviewer
     task_prompt: "Review the work done for the task in {state_dir}/task.md. Read the project files, run tests, then write your verdict to {state_dir}/review-result.md"
@@ -66,4 +65,3 @@ loop:
       - If approved: write exactly "SHIP" to {state_dir}/review-result.md
       - If needs work: write exactly "REVISE" to {state_dir}/review-result.md
         AND write specific, actionable feedback to {state_dir}/review-feedback.md
-    model: sonnet
