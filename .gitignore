@@ -50,3 +50,6 @@ src/ralphkit/_version.py
 
 # Claude
 .claude/
+
+# ralphkit state
+.ralphkit/
