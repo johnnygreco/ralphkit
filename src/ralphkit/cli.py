@@ -115,7 +115,21 @@ def _resolve_handoff(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Agent pipes and loops for Claude Code",
+        description="Agent pipes and loops for Claude Code.",
+        epilog=(
+            "modes:\n"
+            "  loop (default)  Iterative work/review cycle. Requires a task.\n"
+            "                  Uses built-in worker+reviewer agents by default.\n"
+            "  pipe            Linear multi-step pipeline. Requires --config\n"
+            "                  with a 'pipe' section. Task is optional.\n"
+            "\n"
+            "examples:\n"
+            '  ralph "Add unit tests for utils.py"\n'
+            "  ralph task.md --max-iterations 5\n"
+            "  ralph --config pipeline.yaml\n"
+            "  ralph --list-runs\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "task",
@@ -132,12 +146,12 @@ def main() -> None:
         "--max-iterations",
         type=int,
         default=None,
-        help="Override max iterations from config",
+        help="Override max iterations from config (default: 10)",
     )
     parser.add_argument(
         "--default-model",
         default=None,
-        help="Override default model from config",
+        help="Override default model from config (default: opus)",
     )
     parser.add_argument(
         "--state-dir",
@@ -156,6 +170,11 @@ def main() -> None:
         help="List previous runs and exit",
     )
     args = parser.parse_args()
+
+    # Show help (no error) when invoked with no arguments
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(0)
 
     try:
         config = load_config(args.config)
