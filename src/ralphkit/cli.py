@@ -4,7 +4,6 @@ from dataclasses import replace
 from pathlib import Path
 
 from ralphkit.config import (
-    STATE_DIR,
     VERDICT_REVISE,
     VERDICT_SHIP,
     StepConfig,
@@ -76,6 +75,16 @@ def main() -> None:
         help="Override max iterations from config",
     )
     parser.add_argument(
+        "--default-model",
+        default=None,
+        help="Override default model from config",
+    )
+    parser.add_argument(
+        "--state-dir",
+        default=None,
+        help="Override state directory (default: .ralphkit)",
+    )
+    parser.add_argument(
         "-f",
         "--force",
         action="store_true",
@@ -98,9 +107,15 @@ def main() -> None:
             sys.exit(1)
         config = replace(config, max_iterations=args.max_iterations)
 
+    if args.default_model is not None:
+        config = replace(config, default_model=args.default_model)
+
+    if args.state_dir is not None:
+        config = replace(config, state_dir=args.state_dir)
+
     task_content = resolve_task(args.task)
 
-    state = StateDir()
+    state = StateDir(config.state_dir)
     state.setup()
     state.clean()
     state.write_task(task_content)
@@ -140,7 +155,7 @@ def main() -> None:
             "max_iterations": str(config.max_iterations),
             "default_model": config.default_model,
             "model": resolve_model(step, config.default_model),
-            "state_dir": STATE_DIR,
+            "state_dir": config.state_dir,
         }
 
     def _run_step(step: StepConfig, extra_vars: dict[str, str] | None = None) -> str:
