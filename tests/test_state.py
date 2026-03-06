@@ -203,3 +203,115 @@ def test_setup_writes_to_run_dir(tmp_path):
     state.write_task("hello")
     assert (state.path / "task.md").read_text() == "hello"
     assert state.path.parent == root / "runs"
+
+
+# ── Single-invocation invariant ─────────────────────────────────────
+
+
+def test_setup_creates_exactly_one_run_directory(tmp_path):
+    """setup() must create exactly one numbered run directory."""
+    root = tmp_path / "state"
+    state = StateDir(root)
+    state.setup()
+    runs = list((root / "runs").iterdir())
+    assert len(runs) == 1
+    assert runs[0].name == "001"
+
+
+def test_iterations_do_not_create_run_directories(tmp_path):
+    """write_iteration + clean_for_next_iteration must not create new run dirs."""
+    root = tmp_path / "state"
+    state = StateDir(root)
+    state.setup()
+
+    for i in range(1, 4):
+        state.write_iteration(i)
+        state.write_task("task")
+        (state.path / "review-result.md").write_text("REVISE")
+        (state.path / "work-summary.md").write_text("did stuff")
+        (state.path / "work-complete.md").write_text("done")
+        state.clean_for_next_iteration()
+
+    runs = list((root / "runs").iterdir())
+    assert len(runs) == 1
+    assert runs[0].name == "001"
+
+
+def test_full_lifecycle_single_run_directory(tmp_path):
+    """Simulates a full loop: setup, multiple iterations, all state ops. One run dir."""
+    root = tmp_path / "state"
+    state = StateDir(root)
+    state.setup()
+    state.write_task("build the thing")
+
+    # Iteration 1: REVISE
+    state.write_iteration(1)
+    (state.path / "work-summary.md").write_text("started")
+    (state.path / "review-result.md").write_text("REVISE")
+    (state.path / "review-feedback.md").write_text("needs tests")
+    assert state.read_review_result() == "REVISE"
+    assert state.read_review_feedback() == "needs tests"
+    state.clean_for_next_iteration()
+    # Feedback preserved for next iteration
+    assert state.read_review_feedback() == "needs tests"
+
+    # Iteration 2: SHIP
+    state.write_iteration(2)
+    (state.path / "work-summary.md").write_text("added tests")
+    (state.path / "review-result.md").write_text("SHIP")
+    assert state.read_review_result() == "SHIP"
+
+    # Still exactly one run directory
+    runs = [d for d in (root / "runs").iterdir() if d.is_dir()]
+    assert len(runs) == 1
+    assert runs[0].name == "001"
+    # Task persists across iterations
+    assert state.read_task() == "build the thing"
+
+
+# ── State isolation between runs ────────────────────────────────────
+
+
+def test_state_isolation_between_runs(tmp_path):
+    """Each invocation gets its own run directory with independent state."""
+    root = tmp_path / "state"
+
+    state1 = StateDir(root)
+    state1.setup()
+    state1.write_task("task one")
+    (state1.path / "work-summary.md").write_text("summary one")
+
+    state2 = StateDir(root)
+    state2.setup()
+    state2.write_task("task two")
+
+    # Run 001 data is untouched
+    assert (root / "runs" / "001" / "task.md").read_text() == "task one"
+    assert (root / "runs" / "001" / "work-summary.md").read_text() == "summary one"
+    # Run 002 has its own data
+    assert (root / "runs" / "002" / "task.md").read_text() == "task two"
+    assert not (root / "runs" / "002" / "work-summary.md").exists()
+    # Only two run directories
+    runs = sorted(d.name for d in (root / "runs").iterdir() if d.is_dir())
+    assert runs == ["001", "002"]
+
+
+# ── Symlink consistency ─────────────────────────────────────────────
+
+
+def test_symlink_and_run_dir_are_consistent(tmp_path):
+    """Files written through the symlink are readable from the run dir and vice versa."""
+    root = tmp_path / "state"
+    state = StateDir(root)
+    state.setup()
+
+    # Write through the real run dir path
+    state.write_task("hello from run dir")
+    # Read through the symlink
+    symlink_task = (root / "current" / "task.md").read_text()
+    assert symlink_task == "hello from run dir"
+
+    # Write through the symlink
+    (root / "current" / "work-summary.md").write_text("hello from symlink")
+    # Read through the real run dir path
+    assert state.read_work_summary() == "hello from symlink"
