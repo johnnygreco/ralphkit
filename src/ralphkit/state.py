@@ -3,6 +3,7 @@ from pathlib import Path
 
 from ralphkit.config import STATE_DIR
 
+
 class StateDir:
     def __init__(self, path: str | Path = STATE_DIR):
         self.root = Path(path)
