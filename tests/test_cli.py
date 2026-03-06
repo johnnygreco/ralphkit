@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -128,8 +129,10 @@ loop:
 
 
 @patch("ralphkit.cli.run_claude")
-def test_main_missing_task_arg(mock_run, monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["ralph-loop", "--config", "x.yaml"])
+def test_main_missing_task_arg(mock_run, monkeypatch, tmp_path):
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text(_minimal_config_yaml())
+    monkeypatch.setattr(sys, "argv", ["ralph-loop", "--config", str(cfg)])
     with pytest.raises(SystemExit) as exc_info:
         main()
     assert exc_info.value.code == 2
@@ -172,10 +175,9 @@ def test_main_ship_on_first_iteration(mock_run, monkeypatch, tmp_path):
     )
     monkeypatch.chdir(tmp_path)
 
-    state_dir = tmp_path / STATE_DIR
+    state_dir = tmp_path / STATE_DIR / "current"
 
     def fake_claude(prompt, model, system_prompt):
-        state_dir.mkdir(exist_ok=True)
         (state_dir / "review-result.md").write_text(VERDICT_SHIP)
 
     mock_run.side_effect = fake_claude
@@ -195,11 +197,10 @@ def test_main_revise_then_ship(mock_run, monkeypatch, tmp_path):
     )
     monkeypatch.chdir(tmp_path)
 
-    state_dir = tmp_path / STATE_DIR
+    state_dir = tmp_path / STATE_DIR / "current"
     call_count = {"n": 0}
 
     def fake_claude(prompt, model, system_prompt):
-        state_dir.mkdir(exist_ok=True)
         call_count["n"] += 1
         if call_count["n"] == 1:
             (state_dir / "review-result.md").write_text(VERDICT_REVISE)
@@ -234,10 +235,9 @@ loop:
     )
     monkeypatch.chdir(tmp_path)
 
-    state_dir = tmp_path / STATE_DIR
+    state_dir = tmp_path / STATE_DIR / "current"
 
     def fake_claude(prompt, model, system_prompt):
-        state_dir.mkdir(exist_ok=True)
         (state_dir / "review-result.md").write_text(VERDICT_REVISE)
         (state_dir / "review-feedback.md").write_text("more work")
 
@@ -273,10 +273,9 @@ def test_main_blocked_exits(mock_run, monkeypatch, tmp_path):
     )
     monkeypatch.chdir(tmp_path)
 
-    state_dir = tmp_path / STATE_DIR
+    state_dir = tmp_path / STATE_DIR / "current"
 
     def fake_claude(prompt, model, system_prompt):
-        state_dir.mkdir(exist_ok=True)
         (state_dir / "RALPH-BLOCKED.md").write_text("stuck")
 
     mock_run.side_effect = fake_claude
@@ -296,10 +295,9 @@ def test_main_unexpected_review_result_exits(mock_run, monkeypatch, tmp_path):
     )
     monkeypatch.chdir(tmp_path)
 
-    state_dir = tmp_path / STATE_DIR
+    state_dir = tmp_path / STATE_DIR / "current"
 
     def fake_claude(prompt, model, system_prompt):
-        state_dir.mkdir(exist_ok=True)
         (state_dir / "review-result.md").write_text("MAYBE")
 
     mock_run.side_effect = fake_claude
@@ -336,11 +334,10 @@ cleanup:
     )
     monkeypatch.chdir(tmp_path)
 
-    state_dir = tmp_path / STATE_DIR
+    state_dir = tmp_path / STATE_DIR / "current"
     calls = []
 
     def fake_claude(prompt, model, system_prompt):
-        state_dir.mkdir(exist_ok=True)
         calls.append(prompt)
         if "Work." in prompt:
             (state_dir / "review-result.md").write_text(VERDICT_SHIP)
@@ -356,32 +353,51 @@ cleanup:
     assert "Cleanup." in calls[2]
 
 
-# ── task.md conflict guard ──────────────────────────────────────────
+# ── --list-runs ────────────────────────────────────────────────────
 
 
 @patch("ralphkit.cli.run_claude")
-def test_main_existing_task_different_content_exits(mock_run, monkeypatch, tmp_path):
-    """Existing task.md with different content -> exit 1."""
-    cfg = tmp_path / "ralph.yaml"
-    cfg.write_text(_minimal_config_yaml())
+def test_main_list_runs_empty(mock_run, monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(
-        sys, "argv", ["ralph-loop", "new task", "--config", str(cfg), "-f"]
+        sys,
+        "argv",
+        ["ralph-loop", "--list-runs", "--state-dir", str(tmp_path / STATE_DIR)],
     )
-    monkeypatch.chdir(tmp_path)
-
-    state_dir = tmp_path / STATE_DIR
-    state_dir.mkdir()
-    (state_dir / "task.md").write_text("old task")
-
     with pytest.raises(SystemExit) as exc_info:
         main()
-    assert exc_info.value.code == 1
-    mock_run.assert_not_called()
+    assert exc_info.value.code == 0
+    assert "No runs found." in capsys.readouterr().out
 
 
 @patch("ralphkit.cli.run_claude")
-def test_main_existing_task_same_content_proceeds(mock_run, monkeypatch, tmp_path):
-    """Existing task.md with same content -> proceeds normally."""
+def test_main_list_runs_shows_runs(mock_run, monkeypatch, tmp_path, capsys):
+    """--list-runs shows numbered runs with task first lines."""
+    # Set up some runs manually
+    state_root = tmp_path / STATE_DIR
+    runs_dir = state_root / "runs"
+    (runs_dir / "001").mkdir(parents=True)
+    (runs_dir / "001" / "task.md").write_text("first task\ndetails")
+    (runs_dir / "002").mkdir()
+    (runs_dir / "002" / "task.md").write_text("second task")
+
+    monkeypatch.setattr(
+        sys, "argv", ["ralph-loop", "--list-runs", "--state-dir", str(state_root)]
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+    out = capsys.readouterr().out
+    assert "#001" in out
+    assert "first task" in out
+    assert "#002" in out
+    assert "second task" in out
+
+
+# ── Run number in banner ──────────────────────────────────────────
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_shows_run_number(mock_run, monkeypatch, tmp_path, capsys):
     cfg = tmp_path / "ralph.yaml"
     cfg.write_text(_minimal_config_yaml())
     monkeypatch.setattr(
@@ -389,9 +405,7 @@ def test_main_existing_task_same_content_proceeds(mock_run, monkeypatch, tmp_pat
     )
     monkeypatch.chdir(tmp_path)
 
-    state_dir = tmp_path / STATE_DIR
-    state_dir.mkdir()
-    (state_dir / "task.md").write_text("do stuff")
+    state_dir = tmp_path / STATE_DIR / "current"
 
     def fake_claude(prompt, model, system_prompt):
         (state_dir / "review-result.md").write_text(VERDICT_SHIP)
@@ -401,6 +415,10 @@ def test_main_existing_task_same_content_proceeds(mock_run, monkeypatch, tmp_pat
     with pytest.raises(SystemExit) as exc_info:
         main()
     assert exc_info.value.code == 0
+    assert "#001" in capsys.readouterr().out
+
+
+# ── No existing task proceeds ─────────────────────────────────────
 
 
 @patch("ralphkit.cli.run_claude")
@@ -413,32 +431,7 @@ def test_main_no_existing_task_proceeds(mock_run, monkeypatch, tmp_path):
     )
     monkeypatch.chdir(tmp_path)
 
-    state_dir = tmp_path / STATE_DIR
-
-    def fake_claude(prompt, model, system_prompt):
-        state_dir.mkdir(exist_ok=True)
-        (state_dir / "review-result.md").write_text(VERDICT_SHIP)
-
-    mock_run.side_effect = fake_claude
-
-    with pytest.raises(SystemExit) as exc_info:
-        main()
-    assert exc_info.value.code == 0
-
-
-@patch("ralphkit.cli.run_claude")
-def test_main_existing_empty_task_proceeds(mock_run, monkeypatch, tmp_path):
-    """Existing but empty task.md -> proceeds normally."""
-    cfg = tmp_path / "ralph.yaml"
-    cfg.write_text(_minimal_config_yaml())
-    monkeypatch.setattr(
-        sys, "argv", ["ralph-loop", "do stuff", "--config", str(cfg), "-f"]
-    )
-    monkeypatch.chdir(tmp_path)
-
-    state_dir = tmp_path / STATE_DIR
-    state_dir.mkdir()
-    (state_dir / "task.md").write_text("")
+    state_dir = tmp_path / STATE_DIR / "current"
 
     def fake_claude(prompt, model, system_prompt):
         (state_dir / "review-result.md").write_text(VERDICT_SHIP)
@@ -464,11 +457,10 @@ def test_main_shows_step_numbering(mock_run, mock_time, monkeypatch, tmp_path, c
     )
     monkeypatch.chdir(tmp_path)
 
-    state_dir = tmp_path / STATE_DIR
+    state_dir = tmp_path / STATE_DIR / "current"
     mock_time.time.return_value = 100.0
 
     def fake_claude(prompt, model, system_prompt):
-        state_dir.mkdir(exist_ok=True)
         if "Review." in prompt:
             (state_dir / "review-result.md").write_text(VERDICT_SHIP)
 
@@ -494,7 +486,7 @@ def test_main_shows_timing(mock_run, mock_time, monkeypatch, tmp_path, capsys):
     )
     monkeypatch.chdir(tmp_path)
 
-    state_dir = tmp_path / STATE_DIR
+    state_dir = tmp_path / STATE_DIR / "current"
     # time.time() calls: start_time, iter_start, step_t0, step_end(x2), iter_end, total(x2)
     mock_time.time.return_value = 142.1
     # Override first few calls to control step elapsed
@@ -510,7 +502,6 @@ def test_main_shows_timing(mock_run, mock_time, monkeypatch, tmp_path, capsys):
     mock_time.time.side_effect = fake_time
 
     def fake_claude(prompt, model, system_prompt):
-        state_dir.mkdir(exist_ok=True)
         (state_dir / "review-result.md").write_text(VERDICT_SHIP)
 
     mock_run.side_effect = fake_claude
@@ -522,3 +513,110 @@ def test_main_shows_timing(mock_run, mock_time, monkeypatch, tmp_path, capsys):
     out = capsys.readouterr().out
     assert "14.3s" in out  # step elapsed
     assert "Total elapsed:" in out
+
+
+# ── Run directory invariants ─────────────────────────────────────────
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_multiple_iterations_single_run_directory(mock_run, monkeypatch, tmp_path):
+    """A full loop with REVISE then SHIP must create exactly one run directory."""
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text(_minimal_config_yaml())
+    monkeypatch.setattr(
+        sys, "argv", ["ralph-loop", "do stuff", "--config", str(cfg), "-f"]
+    )
+    monkeypatch.chdir(tmp_path)
+
+    state_dir = tmp_path / STATE_DIR / "current"
+    call_count = {"n": 0}
+
+    def fake_claude(prompt, model, system_prompt):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            (state_dir / "review-result.md").write_text(VERDICT_REVISE)
+            (state_dir / "review-feedback.md").write_text("add tests")
+        else:
+            (state_dir / "review-result.md").write_text(VERDICT_SHIP)
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+
+    runs_dir = tmp_path / STATE_DIR / "runs"
+    run_dirs = sorted(d.name for d in runs_dir.iterdir() if d.is_dir())
+    assert run_dirs == ["001"]
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_two_invocations_create_two_runs(mock_run, monkeypatch, tmp_path):
+    """Two sequential ralph-loop invocations create runs 001 and 002, not more."""
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text(_minimal_config_yaml())
+    monkeypatch.chdir(tmp_path)
+
+    state_dir = tmp_path / STATE_DIR / "current"
+
+    def fake_claude(prompt, model, system_prompt):
+        (state_dir / "review-result.md").write_text(VERDICT_SHIP)
+
+    mock_run.side_effect = fake_claude
+
+    # First invocation
+    monkeypatch.setattr(
+        sys, "argv", ["ralph-loop", "task one", "--config", str(cfg), "-f"]
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+
+    # Second invocation
+    monkeypatch.setattr(
+        sys, "argv", ["ralph-loop", "task two", "--config", str(cfg), "-f"]
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+
+    runs_dir = tmp_path / STATE_DIR / "runs"
+    run_dirs = sorted(d.name for d in runs_dir.iterdir() if d.is_dir())
+    assert run_dirs == ["001", "002"]
+    assert (runs_dir / "001" / "task.md").read_text() == "task one"
+    assert (runs_dir / "002" / "task.md").read_text() == "task two"
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_prompts_use_symlink_path(mock_run, monkeypatch, tmp_path):
+    """Prompt templates receive the 'current' symlink as state_dir, not the run dir."""
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text("""\
+max_iterations: 3
+default_model: opus
+loop:
+  - step_name: worker
+    task_prompt: "Read {state_dir}/task.md"
+    system_prompt: "System."
+""")
+    monkeypatch.setattr(
+        sys, "argv", ["ralph-loop", "do stuff", "--config", str(cfg), "-f"]
+    )
+    monkeypatch.chdir(tmp_path)
+
+    state_dir = tmp_path / STATE_DIR / "current"
+    captured_prompts = []
+
+    def fake_claude(prompt, model, system_prompt):
+        captured_prompts.append(prompt)
+        (state_dir / "review-result.md").write_text(VERDICT_SHIP)
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit):
+        main()
+
+    expected_suffix = str(Path(STATE_DIR) / "current")
+    assert any(expected_suffix in p for p in captured_prompts)
+    # Must NOT contain the raw run dir path
+    assert not any("runs/001" in p for p in captured_prompts)
