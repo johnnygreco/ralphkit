@@ -4,6 +4,7 @@ from ralphkit.cli import resolve_task
 from ralphkit.config import (
     DEFAULT_MAX_ITERATIONS,
     DEFAULT_MODEL,
+    STATE_DIR,
     StepConfig,
     load_config,
     resolve_model,
@@ -161,6 +162,7 @@ def test_load_config_none_returns_defaults():
     config = load_config(None)
     assert config.max_iterations == DEFAULT_MAX_ITERATIONS
     assert config.default_model == DEFAULT_MODEL
+    assert config.state_dir == STATE_DIR
     assert len(config.loop) == 2
     assert config.loop[0].step_name == "worker"
     assert config.loop[1].step_name == "reviewer"
@@ -290,3 +292,34 @@ loop:
     )
     config = load_config(cfg_file)
     assert config.max_iterations == 3
+
+
+def test_load_config_state_dir_default(tmp_path):
+    """Config without state_dir uses the default."""
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+loop:
+  - step_name: worker
+    task_prompt: "Work."
+    system_prompt: "System."
+"""
+    )
+    config = load_config(cfg_file)
+    assert config.state_dir == STATE_DIR
+
+
+def test_load_config_state_dir_custom(tmp_path):
+    """Config with state_dir overrides the default."""
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+state_dir: .custom-state
+loop:
+  - step_name: worker
+    task_prompt: "Work."
+    system_prompt: "System."
+"""
+    )
+    config = load_config(cfg_file)
+    assert config.state_dir == ".custom-state"

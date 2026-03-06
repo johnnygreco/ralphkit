@@ -337,3 +337,38 @@ cleanup:
     assert "Init." in calls[0]
     assert "Work." in calls[1]
     assert "Cleanup." in calls[2]
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_custom_state_dir(mock_run, monkeypatch, tmp_path):
+    """--state-dir overrides the state directory."""
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text(_minimal_config_yaml())
+    custom_dir = ".my-state"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ralph-loop",
+            "do stuff",
+            "--config",
+            str(cfg),
+            "--state-dir",
+            custom_dir,
+            "-f",
+        ],
+    )
+    monkeypatch.chdir(tmp_path)
+
+    state_dir = tmp_path / custom_dir
+
+    def fake_claude(prompt, model, system_prompt):
+        state_dir.mkdir(exist_ok=True)
+        (state_dir / "review-result.md").write_text(VERDICT_SHIP)
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+    assert (state_dir / "task.md").exists()
