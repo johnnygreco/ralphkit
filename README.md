@@ -226,12 +226,11 @@ The cleanup phase always runs (even if the loop exits with an error), similar to
 ### Pipe
 
 ```
-┌───────────┐    ┌───────────┐    ┌───────────┐
-│ step 1    │───>│ step 2    │───>│ step 3    │──> done
-│ (analyze) │    │ (plan)    │    │ (implement)│
-└───────────┘    └───────────┘    └───────────┘
-     │                │                │
-     └── handoff ─────┘── handoff ─────┘
+┌────────┐    ┌────────┐    ┌────────┐
+│ step 1 │───>│ step 2 │───>│ step 3 │──> done
+└────────┘    └────────┘    └────────┘
+     │             │             │
+     └── handoff ──┘── handoff ──┘
 ```
 
 Each step runs once. Output flows forward via **named handoff files**:
