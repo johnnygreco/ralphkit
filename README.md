@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/ralphkit.png" alt="ralphkit" width="600">
+</p>
+
 # ralphkit
 
 A step-based pipeline for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Define setup, loop, and cleanup phases in a YAML config. The loop iterates until the reviewer says **SHIP** or max iterations are reached.
@@ -25,13 +29,17 @@ uvx ralphkit ralph-loop "your task here" --config ralph.yaml
 ## Quick Start
 
 ```bash
+# Run with built-in defaults (no config needed)
+ralph-loop "Create a Python function in prime.py that checks if a number is prime. Include unit tests."
+
+# Or with a custom config
 ralph-loop "Create a Python function in prime.py that checks if a number is prime. Include unit tests." --config configs/example.yaml
 ```
 
 ## Usage
 
 ```
-ralph-loop TASK --config PATH [OPTIONS]
+ralph-loop TASK [OPTIONS]
 ```
 
 **Arguments:**
@@ -39,33 +47,37 @@ ralph-loop TASK --config PATH [OPTIONS]
 | Argument | Description | Default |
 |----------|-------------|---------|
 | `TASK` | Task description (string or path to `.md` file) | required |
-| `--config PATH` | Path to YAML config file | required |
-| `--max-iterations N` | Override max iterations from config | from config |
+| `--config PATH` | Path to YAML config file | built-in defaults |
+| `--max-iterations N` | Override max iterations from config | 10 |
 | `-f` / `--force` | Skip confirmation prompt | off |
 
 **Examples:**
 
 ```bash
-# Inline task
+# No config — uses built-in worker/reviewer loop
+ralph-loop "Build a REST API"
+
+# With a custom config
 ralph-loop "Build a REST API" --config ralph.yaml
 
 # Task from a markdown file
 ralph-loop task.md --config ralph.yaml
 
 # Override max iterations
-ralph-loop "Build a REST API" --config ralph.yaml --max-iterations 5
+ralph-loop "Build a REST API" --max-iterations 5
 
 # Skip confirmation
-ralph-loop "Build a REST API" --config ralph.yaml -f
+ralph-loop "Build a REST API" -f
 ```
 
 ### Config file
 
-A YAML config file is required. It defines three phases — **setup**, **loop**, and **cleanup** — each containing a list of steps. Only `loop` is required.
+The config file is optional. Without one, ralphkit uses a built-in default loop with a worker (opus) and reviewer (sonnet) step. When a config is provided, all sections are optional — any section not specified uses defaults.
 
 ```yaml
-max_iterations: 10
-default_model: opus
+# All top-level keys are optional
+max_iterations: 10    # default: 10
+default_model: sonnet  # default: sonnet
 
 # Optional: runs once before the loop
 setup:
@@ -73,7 +85,7 @@ setup:
     task_prompt: "Initialize the project."
     system_prompt: "You are a setup agent."
 
-# Required: iterated until SHIP or max iterations
+# Optional: overrides the built-in worker/reviewer loop
 loop:
   - step_name: worker
     task_prompt: "Read .ralphkit/task.md and begin working. This is iteration {iteration}."
@@ -90,8 +102,6 @@ cleanup:
     task_prompt: "Clean up temporary files."
     system_prompt: "You are a cleanup agent."
 ```
-
-**Required top-level keys:** `max_iterations`, `default_model`, `loop`
 
 Each step requires `step_name`, `task_prompt`, and `system_prompt`. The optional `model` field overrides `default_model` for that step.
 
