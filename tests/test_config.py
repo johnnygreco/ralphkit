@@ -290,3 +290,126 @@ loop:
     )
     config = load_config(cfg_file)
     assert config.max_iterations == 3
+
+
+# ── Pipe config tests ──────────────────────────────────────────────
+
+
+def test_load_config_pipe_section(tmp_path):
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+pipe:
+  - step_name: analyze
+    task_prompt: "Analyze."
+    system_prompt: "You are an analyst."
+  - step_name: report
+    task_prompt: "Report."
+    system_prompt: "You are a reporter."
+"""
+    )
+    config = load_config(cfg_file)
+    assert len(config.pipe) == 2
+    assert config.pipe[0].step_name == "analyze"
+    assert config.pipe[1].step_name == "report"
+    # loop gets defaults when pipe is present
+    assert len(config.loop) == 2
+    assert config.setup == []
+    assert config.cleanup == []
+
+
+def test_load_config_pipe_and_loop_mutual_exclusivity(tmp_path):
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+pipe:
+  - step_name: step1
+    task_prompt: "P."
+    system_prompt: "S."
+loop:
+  - step_name: worker
+    task_prompt: "W."
+    system_prompt: "S."
+"""
+    )
+    with pytest.raises(ValueError, match="cannot have both 'pipe' and 'loop'"):
+        load_config(cfg_file)
+
+
+def test_load_config_pipe_with_setup_error(tmp_path):
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+pipe:
+  - step_name: step1
+    task_prompt: "P."
+    system_prompt: "S."
+setup:
+  - step_name: init
+    task_prompt: "Init."
+    system_prompt: "S."
+"""
+    )
+    with pytest.raises(ValueError, match="pipe configs cannot have 'setup' or 'cleanup'"):
+        load_config(cfg_file)
+
+
+def test_load_config_pipe_with_cleanup_error(tmp_path):
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+pipe:
+  - step_name: step1
+    task_prompt: "P."
+    system_prompt: "S."
+cleanup:
+  - step_name: final
+    task_prompt: "Final."
+    system_prompt: "S."
+"""
+    )
+    with pytest.raises(ValueError, match="pipe configs cannot have 'setup' or 'cleanup'"):
+        load_config(cfg_file)
+
+
+def test_load_config_empty_pipe_error(tmp_path):
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text("pipe: []\n")
+    with pytest.raises(ValueError, match="pipe must have at least 1 step"):
+        load_config(cfg_file)
+
+
+def test_load_config_pipe_step_handoff_prompt(tmp_path):
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+pipe:
+  - step_name: step1
+    task_prompt: "P."
+    system_prompt: "S."
+    handoff_prompt: "Custom handoff for step1."
+"""
+    )
+    config = load_config(cfg_file)
+    assert config.pipe[0].handoff_prompt == "Custom handoff for step1."
+
+
+def test_load_config_pipe_handoff_prompt(tmp_path):
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+handoff_prompt: "Global handoff override."
+pipe:
+  - step_name: step1
+    task_prompt: "P."
+    system_prompt: "S."
+"""
+    )
+    config = load_config(cfg_file)
+    assert config.handoff_prompt == "Global handoff override."
+
+
+def test_load_config_defaults_pipe_empty():
+    config = load_config(None)
+    assert config.pipe == []
+    assert config.handoff_prompt is None
