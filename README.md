@@ -49,6 +49,7 @@ ralph-loop TASK [OPTIONS]
 | `TASK` | Task description (string or path to `.md` file) | required |
 | `--config PATH` | Path to YAML config file | built-in defaults |
 | `--max-iterations N` | Override max iterations from config | 10 |
+| `--state-dir DIR` | Override state directory | `.ralphkit` |
 | `-f` / `--force` | Skip confirmation prompt | off |
 
 **Examples:**
@@ -76,8 +77,9 @@ The config file is optional. Without one, ralphkit uses a built-in default loop 
 
 ```yaml
 # All top-level keys are optional
-max_iterations: 10    # default: 10
-default_model: sonnet  # default: sonnet
+max_iterations: 10      # default: 10
+default_model: opus     # default: opus
+state_dir: .ralphkit    # default: .ralphkit
 
 # Optional: runs once before the loop
 setup:
@@ -117,7 +119,7 @@ Both `task_prompt` and `system_prompt` support template variables via `{variable
 | `{max_iterations}` | Configured max iterations |
 | `{default_model}` | Pipeline's default model |
 | `{model}` | Resolved model for this step |
-| `{state_dir}` | State directory path (`.ralphkit`) |
+| `{state_dir}` | State directory path (default: `.ralphkit`, configurable) |
 
 **Loop phase only:**
 
@@ -150,7 +152,7 @@ The cleanup phase always runs (even if the loop exits with an error), similar to
 
 ## State Files
 
-State is persisted in `.ralphkit/` in the current working directory so each stateless `claude -p` invocation can pick up where the last left off.
+State is persisted in the state directory (`.ralphkit/` by default) in the current working directory so each stateless `claude -p` invocation can pick up where the last left off. Override with `--state-dir` or `state_dir` in the config.
 
 | File | Purpose |
 |------|---------|
