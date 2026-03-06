@@ -4,7 +4,14 @@ from unittest.mock import patch
 
 import pytest
 
-from ralphkit.cli import main, _render_prompt, _run_phase, _step_names
+from ralphkit.cli import (
+    main,
+    _build_default_handoff,
+    _render_prompt,
+    _resolve_handoff,
+    _run_phase,
+    _step_names,
+)
 from ralphkit.config import STATE_DIR, VERDICT_REVISE, VERDICT_SHIP, StepConfig
 
 
@@ -620,3 +627,306 @@ loop:
     assert any(expected_suffix in p for p in captured_prompts)
     # Must NOT contain the raw run dir path
     assert not any("runs/001" in p for p in captured_prompts)
+
+
+# ── Pipe tests ───────────────────────────────────────────────────────
+
+
+def _pipe_config_yaml():
+    return """\
+default_model: opus
+pipe:
+  - step_name: analyze
+    task_prompt: "Analyze the code."
+    system_prompt: "You are an analyst."
+  - step_name: plan
+    task_prompt: "Create a plan."
+    system_prompt: "You are a planner."
+  - step_name: implement
+    task_prompt: "Implement the plan."
+    system_prompt: "You are a developer."
+"""
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_pipe_runs_all_steps(mock_run, monkeypatch, tmp_path):
+    """Pipe config runs all steps exactly once and exits 0."""
+    cfg = tmp_path / "pipe.yaml"
+    cfg.write_text(_pipe_config_yaml())
+    monkeypatch.setattr(sys, "argv", ["ralph", "--config", str(cfg), "-f"])
+    monkeypatch.chdir(tmp_path)
+
+    calls = []
+
+    def fake_claude(prompt, model, system_prompt):
+        calls.append(prompt)
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+    assert len(calls) == 3
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_pipe_no_task_succeeds(mock_run, monkeypatch, tmp_path):
+    """Pipe config with no task arg succeeds."""
+    cfg = tmp_path / "pipe.yaml"
+    cfg.write_text(_pipe_config_yaml())
+    monkeypatch.setattr(sys, "argv", ["ralph", "--config", str(cfg), "-f"])
+    monkeypatch.chdir(tmp_path)
+
+    mock_run.side_effect = lambda *a: None
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+    # No task.md should be created
+    assert not (tmp_path / STATE_DIR / "current" / "task.md").exists()
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_pipe_with_task(mock_run, monkeypatch, tmp_path):
+    """Pipe config + task arg writes task.md and makes {task} available."""
+    cfg = tmp_path / "pipe.yaml"
+    cfg.write_text(
+        """\
+default_model: opus
+pipe:
+  - step_name: step1
+    task_prompt: "Do: {task}"
+    system_prompt: "System."
+"""
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["ralph", "refactor auth", "--config", str(cfg), "-f"]
+    )
+    monkeypatch.chdir(tmp_path)
+
+    captured_prompts = []
+
+    def fake_claude(prompt, model, system_prompt):
+        captured_prompts.append(prompt)
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+    assert (tmp_path / STATE_DIR / "current" / "task.md").read_text() == "refactor auth"
+    assert captured_prompts[0] == "Do: refactor auth"
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_pipe_blocked_aborts(mock_run, monkeypatch, tmp_path):
+    """Blocked state during pipe execution exits 1."""
+    cfg = tmp_path / "pipe.yaml"
+    cfg.write_text(_pipe_config_yaml())
+    monkeypatch.setattr(sys, "argv", ["ralph", "--config", str(cfg), "-f"])
+    monkeypatch.chdir(tmp_path)
+
+    state_dir = tmp_path / STATE_DIR / "current"
+
+    def fake_claude(prompt, model, system_prompt):
+        (state_dir / "RALPH-BLOCKED.md").write_text("stuck")
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_pipe_shows_banner(mock_run, monkeypatch, tmp_path, capsys):
+    """Pipe banner shows RALPH PIPE and step names."""
+    cfg = tmp_path / "pipe.yaml"
+    cfg.write_text(_pipe_config_yaml())
+    monkeypatch.setattr(sys, "argv", ["ralph", "--config", str(cfg), "-f"])
+    monkeypatch.chdir(tmp_path)
+
+    mock_run.side_effect = lambda *a: None
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+
+    out = capsys.readouterr().out
+    assert "RALPH PIPE" in out
+    assert "analyze, plan, implement" in out
+    assert "Steps:" in out
+    assert "PIPE COMPLETE" in out
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_pipe_handoff_in_system_prompt(mock_run, monkeypatch, tmp_path):
+    """Default handoff instructions are appended to system_prompt."""
+    cfg = tmp_path / "pipe.yaml"
+    cfg.write_text(
+        """\
+default_model: opus
+pipe:
+  - step_name: step1
+    task_prompt: "Work."
+    system_prompt: "You are step1."
+  - step_name: step2
+    task_prompt: "Work."
+    system_prompt: "You are step2."
+"""
+    )
+    monkeypatch.setattr(sys, "argv", ["ralph", "--config", str(cfg), "-f"])
+    monkeypatch.chdir(tmp_path)
+
+    captured_systems = []
+
+    def fake_claude(prompt, model, system_prompt):
+        captured_systems.append(system_prompt)
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+
+    # First step: should have write instruction for handoff to step2, no read
+    assert "handoff__step1__to__step2" in captured_systems[0]
+    assert (
+        "handoff__"
+        not in captured_systems[0]
+        .split("handoff__step1__to__step2")[0]
+        .rsplit("task.md", 1)[0]
+    )
+
+    # Last step: should have read instruction from step1, no write
+    assert "handoff__step1__to__step2" in captured_systems[1]
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_pipe_step_handoff_prompt_override(mock_run, monkeypatch, tmp_path):
+    """Step-level handoff_prompt overrides the default."""
+    cfg = tmp_path / "pipe.yaml"
+    cfg.write_text(
+        """\
+default_model: opus
+pipe:
+  - step_name: step1
+    task_prompt: "Work."
+    system_prompt: "You are step1."
+    handoff_prompt: "CUSTOM HANDOFF"
+  - step_name: step2
+    task_prompt: "Work."
+    system_prompt: "You are step2."
+"""
+    )
+    monkeypatch.setattr(sys, "argv", ["ralph", "--config", str(cfg), "-f"])
+    monkeypatch.chdir(tmp_path)
+
+    captured_systems = []
+
+    def fake_claude(prompt, model, system_prompt):
+        captured_systems.append(system_prompt)
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+
+    # Step 1 should use custom handoff
+    assert "CUSTOM HANDOFF" in captured_systems[0]
+    # Step 2 should use default (has read instruction)
+    assert "handoff__step1__to__step2" in captured_systems[1]
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_pipe_empty_handoff_prompt_disables(mock_run, monkeypatch, tmp_path):
+    """Empty string handoff_prompt disables handoff injection."""
+    cfg = tmp_path / "pipe.yaml"
+    cfg.write_text(
+        """\
+default_model: opus
+pipe:
+  - step_name: step1
+    task_prompt: "Work."
+    system_prompt: "You are step1."
+    handoff_prompt: ""
+"""
+    )
+    monkeypatch.setattr(sys, "argv", ["ralph", "--config", str(cfg), "-f"])
+    monkeypatch.chdir(tmp_path)
+
+    captured_systems = []
+
+    def fake_claude(prompt, model, system_prompt):
+        captured_systems.append(system_prompt)
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+
+    # System prompt should be just the original, no handoff appended
+    assert captured_systems[0] == "You are step1."
+
+
+# ── _build_default_handoff ───────────────────────────────────────────
+
+
+def test_build_default_handoff_first_step():
+    steps = [
+        StepConfig(step_name="a", task_prompt="", system_prompt=""),
+        StepConfig(step_name="b", task_prompt="", system_prompt=""),
+    ]
+    result = _build_default_handoff(1, 2, steps, ".ralphkit/current")
+    # First step: write handoff, no read
+    assert "handoff__a__to__b" in result
+    assert "Write" in result or "write" in result
+    assert "Read" not in result.split("task.md")[0]  # no read before task.md mention
+
+
+def test_build_default_handoff_last_step():
+    steps = [
+        StepConfig(step_name="a", task_prompt="", system_prompt=""),
+        StepConfig(step_name="b", task_prompt="", system_prompt=""),
+    ]
+    result = _build_default_handoff(2, 2, steps, ".ralphkit/current")
+    # Last step: read handoff, no write
+    assert "handoff__a__to__b" in result
+    assert "Read" in result or "read" in result
+
+
+def test_build_default_handoff_middle_step():
+    steps = [
+        StepConfig(step_name="a", task_prompt="", system_prompt=""),
+        StepConfig(step_name="b", task_prompt="", system_prompt=""),
+        StepConfig(step_name="c", task_prompt="", system_prompt=""),
+    ]
+    result = _build_default_handoff(2, 3, steps, ".ralphkit/current")
+    # Middle step: read from a, write to c
+    assert "handoff__a__to__b" in result
+    assert "handoff__b__to__c" in result
+
+
+# ── _resolve_handoff ────────────────────────────────────────────────
+
+
+def test_resolve_handoff_step_level_wins():
+    step = StepConfig(
+        step_name="s", task_prompt="", system_prompt="", handoff_prompt="STEP"
+    )
+    result = _resolve_handoff(step, "CONFIG", 1, 1, [step], "dir")
+    assert result == "STEP"
+
+
+def test_resolve_handoff_config_level_wins_over_default():
+    step = StepConfig(step_name="s", task_prompt="", system_prompt="")
+    result = _resolve_handoff(step, "CONFIG", 1, 1, [step], "dir")
+    assert result == "CONFIG"
+
+
+def test_resolve_handoff_falls_back_to_default():
+    step = StepConfig(step_name="s", task_prompt="", system_prompt="")
+    result = _resolve_handoff(step, None, 1, 1, [step], "dir")
+    assert "task.md" in result  # default always mentions task.md

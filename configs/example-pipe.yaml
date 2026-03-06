@@ -1,0 +1,25 @@
+default_model: opus
+state_dir: .ralphkit
+
+pipe:
+  - step_name: analyze
+    task_prompt: "Analyze the codebase: {task}"
+    system_prompt: |
+      You are an expert code analyst. Examine the codebase thoroughly
+      and identify key patterns, potential issues, and areas for improvement.
+
+  - step_name: plan
+    task_prompt: "Create an implementation plan based on the analysis."
+    system_prompt: |
+      You are a technical architect. Create a clear, actionable plan
+      based on the analysis from the previous step.
+
+  - step_name: implement
+    task_prompt: "Implement the plan from the previous step."
+    system_prompt: |
+      You are a senior developer. Follow the plan precisely and
+      implement the changes with high quality code.
+    model: sonnet
+    handoff_prompt: |
+      Read {state_dir}/handoff__plan__to__implement.md for the implementation plan.
+      This is the final step — no handoff file needed. Just do the work.

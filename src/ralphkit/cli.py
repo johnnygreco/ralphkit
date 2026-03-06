@@ -56,9 +56,59 @@ def _step_names(steps: list[StepConfig]) -> str:
     return ", ".join(s.step_name for s in steps) if steps else "(none)"
 
 
+def _build_default_handoff(
+    step_index: int,
+    total_steps: int,
+    steps: list[StepConfig],
+    state_dir: str,
+) -> str:
+    """Build position-aware default handoff instructions for a pipe step."""
+    step_name = steps[step_index - 1].step_name
+    parts = []
+
+    # Read from previous step's handoff
+    if step_index > 1:
+        prev_name = steps[step_index - 2].step_name
+        parts.append(
+            f"Read {state_dir}/handoff__{prev_name}__to__{step_name}.md "
+            f"for context from the previous step."
+        )
+
+    # Write handoff for next step
+    if step_index < total_steps:
+        next_name = steps[step_index].step_name
+        parts.append(
+            f"When you finish, write your output and handoff notes to "
+            f"{state_dir}/handoff__{step_name}__to__{next_name}.md"
+        )
+
+    # Always suggest reading task.md
+    parts.append(
+        f"If {state_dir}/task.md exists, read it for the overall task context."
+    )
+
+    return "\n\n".join(parts)
+
+
+def _resolve_handoff(
+    step: StepConfig,
+    config_handoff: str | None,
+    step_index: int,
+    total_steps: int,
+    steps: list[StepConfig],
+    state_dir: str,
+) -> str:
+    """Resolve handoff prompt using 3-tier override: step → config → built-in default."""
+    if step.handoff_prompt is not None:
+        return step.handoff_prompt
+    if config_handoff is not None:
+        return config_handoff
+    return _build_default_handoff(step_index, total_steps, steps, state_dir)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Iterative step-based pipeline for Claude Code",
+        description="Agent pipes and loops for Claude Code",
     )
     parser.add_argument(
         "task",
@@ -137,38 +187,52 @@ def main() -> None:
                 print(f"  #{run_dir.name}  {first_line}")
         sys.exit(0)
 
-    if args.task is None:
+    if config.pipe:
+        task_content = resolve_task(args.task) if args.task else None
+    elif args.task is None:
         parser.error("the following arguments are required: task")
-
-    task_content = resolve_task(args.task)
+    else:
+        task_content = resolve_task(args.task)
 
     start_time = time.time()
 
     state.setup()
-    state.write_task(task_content)
+    if task_content is not None:
+        state.write_task(task_content)
 
     # ── Banner ──────────────────────────────────────────────────────
-    first_line = task_content.split("\n", 1)[0]
+    is_pipe = bool(config.pipe)
     print()
     print(f"{BLUE}{'=' * 59}{NC}")
-    print(f"{BLUE}  RALPH LOOP{NC}")
+    print(f"{BLUE}  RALPH {'PIPE' if is_pipe else 'LOOP'}{NC}")
     print(f"{BLUE}{'=' * 59}{NC}")
     print()
-    print(f"  {YELLOW}Task:{NC}      {first_line}")
+    if task_content is not None:
+        first_line = task_content.split("\n", 1)[0]
+        print(f"  {YELLOW}Task:{NC}      {first_line}")
     print(f"  {YELLOW}Run:{NC}       #{state.path.name}")
     print(f"  {YELLOW}Model:{NC}     {config.default_model}")
-    print(f"  {YELLOW}Max iter:{NC}  {config.max_iterations}")
-    print(f"  {YELLOW}Setup:{NC}     {_step_names(config.setup)}")
-    print(f"  {YELLOW}Loop:{NC}      {_step_names(config.loop)}")
-    print(f"  {YELLOW}Cleanup:{NC}   {_step_names(config.cleanup)}")
+    if is_pipe:
+        print(f"  {YELLOW}Steps:{NC}     {len(config.pipe)}")
+        print(f"  {YELLOW}Pipe:{NC}      {_step_names(config.pipe)}")
+    else:
+        print(f"  {YELLOW}Max iter:{NC}  {config.max_iterations}")
+        print(f"  {YELLOW}Setup:{NC}     {_step_names(config.setup)}")
+        print(f"  {YELLOW}Loop:{NC}      {_step_names(config.loop)}")
+        print(f"  {YELLOW}Cleanup:{NC}   {_step_names(config.cleanup)}")
     print()
 
     # ── Confirmation ────────────────────────────────────────────────
     if not args.force:
-        print(
-            f"{YELLOW}Warning: This will run up to {config.max_iterations} iterations.{NC}"
-        )
-        print(f"{YELLOW}   Each step costs API credits.{NC}")
+        if is_pipe:
+            print(
+                f"{YELLOW}This will run {len(config.pipe)} steps. Each step costs API credits.{NC}"
+            )
+        else:
+            print(
+                f"{YELLOW}Warning: This will run up to {config.max_iterations} iterations.{NC}"
+            )
+            print(f"{YELLOW}   Each step costs API credits.{NC}")
         print()
         confirm = input("Proceed? (y/N) ").strip()
         if confirm.lower() not in ("y", "yes"):
@@ -186,13 +250,19 @@ def main() -> None:
             "state_dir": str(state.active_path),
         }
 
-    def _run_step(step: StepConfig, extra_vars: dict[str, str] | None = None) -> str:
+    def _run_step(
+        step: StepConfig,
+        extra_vars: dict[str, str] | None = None,
+        system_suffix: str = "",
+    ) -> str:
         """Run a step and return the resolved model name."""
         variables = _base_vars(step)
         if extra_vars:
             variables.update(extra_vars)
         prompt = _render_prompt(step.task_prompt, variables)
         system = _render_prompt(step.system_prompt, variables)
+        if system_suffix:
+            system = system + "\n\n" + system_suffix
         model = variables["model"]
         _run_phase(prompt, model, system)
         return model
@@ -202,6 +272,66 @@ def main() -> None:
 
     def _print_total_elapsed() -> None:
         print(f"\n  Total elapsed: {_fmt_elapsed(time.time() - start_time)}")
+
+    def _check_blocked() -> None:
+        blocked = state.is_blocked()
+        if blocked:
+            print()
+            print(f"{RED}Blocked:{NC}")
+            print(blocked)
+            _print_total_elapsed()
+            sys.exit(1)
+
+    if is_pipe:
+        # ── PIPE execution ─────────────────────────────────────────
+        total_steps = len(config.pipe)
+        task_str = task_content if task_content is not None else ""
+        state_dir_str = str(state.active_path)
+
+        for idx, step in enumerate(config.pipe, 1):
+            step_model = resolve_model(step, config.default_model)
+            print(
+                f"  {YELLOW}[{idx}/{total_steps}] {step.step_name} ({step_model})...{NC}"
+            )
+            t0 = time.time()
+
+            prev_step_name = config.pipe[idx - 2].step_name if idx > 1 else ""
+            next_step_name = config.pipe[idx].step_name if idx < total_steps else ""
+
+            pipe_vars: dict[str, str] = {
+                "step_index": str(idx),
+                "total_steps": str(total_steps),
+                "prev_step_name": prev_step_name,
+                "next_step_name": next_step_name,
+                "task": task_str,
+            }
+
+            # Resolve and render handoff prompt
+            raw_handoff = _resolve_handoff(
+                step,
+                config.handoff_prompt,
+                idx,
+                total_steps,
+                config.pipe,
+                state_dir_str,
+            )
+            handoff = (
+                _render_prompt(raw_handoff, pipe_vars | _base_vars(step))
+                if raw_handoff
+                else ""
+            )
+
+            _run_step(step, extra_vars=pipe_vars, system_suffix=handoff)
+            print(f"  {GREEN}   Done. ({_fmt_elapsed(time.time() - t0)}){NC}")
+
+            _check_blocked()
+
+        print()
+        print(f"{GREEN}{'=' * 59}{NC}")
+        print(f"{GREEN}  PIPE COMPLETE — {total_steps} steps finished{NC}")
+        print(f"{GREEN}{'=' * 59}{NC}")
+        _print_total_elapsed()
+        sys.exit(0)
 
     # ── SETUP phase ─────────────────────────────────────────────────
     if config.setup:
@@ -237,14 +367,7 @@ def main() -> None:
                 _run_step(step, loop_vars)
                 print(f"  {GREEN}   Done. ({_fmt_elapsed(time.time() - t0)}){NC}")
 
-                # Check for blocked state after each step
-                blocked = state.is_blocked()
-                if blocked:
-                    print()
-                    print(f"{RED}Blocked:{NC}")
-                    print(blocked)
-                    _print_total_elapsed()
-                    sys.exit(1)
+                _check_blocked()
 
             # Show work summary if present
             summary = state.read_work_summary()
