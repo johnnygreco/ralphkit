@@ -6,12 +6,11 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# ── ANSI colors (duplicated from cli.py to avoid coupling) ─────────
-RED = "\033[0;31m"
-GREEN = "\033[0;32m"
-YELLOW = "\033[1;33m"
-BLUE = "\033[0;34m"
-NC = "\033[0m"
+from rich import box
+from rich.rule import Rule
+from rich.table import Table
+
+from ralphkit.ui import console, fmt_duration, print_banner
 
 
 @dataclass
@@ -162,14 +161,6 @@ def git_diff_stat() -> tuple[int, int]:
 # ── Report display ─────────────────────────────────────────────────
 
 
-def _fmt_duration(seconds: float) -> str:
-    if seconds >= 60:
-        m = int(seconds) // 60
-        s = seconds - m * 60
-        return f"{m}m {s:.0f}s"
-    return f"{seconds:.1f}s"
-
-
 def _short_model(model: str) -> str:
     """Shorten model ID for display (e.g., 'claude-opus-4-6' -> 'opus')."""
     for part in ("opus", "sonnet", "haiku"):
@@ -179,60 +170,87 @@ def _short_model(model: str) -> str:
 
 
 def print_report(report: RunReport) -> None:
-    sep = "=" * 58
-    thin = "-" * 46
-
-    print()
-    print(f"{BLUE}{sep}{NC}")
-    print(f"{BLUE}  RUN REPORT{NC}")
-    print(f"{BLUE}{sep}{NC}")
-    print()
+    console.print()
+    print_banner("RUN REPORT")
+    console.print()
 
     # Outcome
     outcome_str = report.outcome or "UNKNOWN"
     if report.iterations_completed > 0:
         outcome_str += f" ({report.iterations_completed} iteration(s))"
-    print(f"  Outcome:     {outcome_str}")
+    if report.outcome in ("SHIP", "PIPE_COMPLETE"):
+        outcome_display = f"[bold green]{outcome_str}[/]"
+    elif report.outcome in ("MAX_ITERATIONS", "ERROR"):
+        outcome_display = f"[bold red]{outcome_str}[/]"
+    else:
+        outcome_display = outcome_str
+    console.print(f"  Outcome:     {outcome_display}")
 
     # Total time
     total_api_ms = sum(
         s.duration_api_ms for s in report.steps if s.duration_api_ms is not None
     )
-    time_str = f"{_fmt_duration(report.total_duration_s)}"
+    time_str = f"{fmt_duration(report.total_duration_s)}"
     if total_api_ms > 0:
-        time_str += f" (API: {_fmt_duration(total_api_ms / 1000)})"
-    print(f"  Total time:  {time_str}")
-    print()
+        time_str += f" [dim](API: {fmt_duration(total_api_ms / 1000)})[/]"
+    console.print(f"  Total time:  {time_str}")
+    console.print()
 
-    # Token usage
+    # Token usage table
     usage = report.token_usage_by_model()
     if usage:
-        print(f"  {YELLOW}-- Token Usage {thin}{NC}")
-        header = f"  {'Model':<20} {'Input':>8} {'Output':>8} {'Cache Read':>12} {'Cache Write':>12}"
-        print(header)
+        table = Table(
+            title="Token Usage",
+            title_style="bold yellow",
+            box=box.SIMPLE_HEAVY,
+            show_edge=False,
+            padding=(0, 1),
+        )
+        table.add_column("Model", style="bold")
+        table.add_column("Input", justify="right")
+        table.add_column("Output", justify="right")
+        table.add_column("Cache Read", justify="right")
+        table.add_column("Cache Write", justify="right")
         for model_id, tokens in sorted(usage.items()):
             inp = tokens.get("inputTokens", 0)
             out = tokens.get("outputTokens", 0)
             cr = tokens.get("cacheReadInputTokens", 0)
             cw = tokens.get("cacheCreationInputTokens", 0)
-            print(f"  {model_id:<20} {inp:>8,} {out:>8,} {cr:>12,} {cw:>12,}")
-        print()
+            table.add_row(model_id, f"{inp:,}", f"{out:,}", f"{cr:,}", f"{cw:,}")
+        console.print(table)
+        console.print()
 
     # Steps table
     if report.steps:
-        print(f"  {YELLOW}-- Steps {thin}{NC}")
-        header = f"  {'Phase':<10} {'Step':<12} {'Model':<8} {'Duration':>10} {'Turns':>6} {'+/-':>10}"
-        print(header)
+        table = Table(
+            title="Steps",
+            title_style="bold yellow",
+            box=box.SIMPLE_HEAVY,
+            show_edge=False,
+            padding=(0, 1),
+        )
+        table.add_column("Phase")
+        table.add_column("Step")
+        table.add_column("Model")
+        table.add_column("Duration", justify="right")
+        table.add_column("Turns", justify="right")
+        table.add_column("+/-", justify="right")
         for s in report.steps:
             phase = s.phase
             if s.iteration is not None:
                 phase = f"loop:{s.iteration}"
             turns_str = str(s.num_turns) if s.num_turns is not None else "-"
-            diff_str = f"+{s.lines_added}/-{s.lines_deleted}"
-            print(
-                f"  {phase:<10} {s.step_name:<12} {_short_model(s.model):<8} {_fmt_duration(s.duration_s):>10} {turns_str:>6} {diff_str:>10}"
+            diff_str = f"[green]+{s.lines_added}[/]/[red]-{s.lines_deleted}[/]"
+            table.add_row(
+                phase,
+                s.step_name,
+                _short_model(s.model),
+                fmt_duration(s.duration_s),
+                turns_str,
+                diff_str,
             )
-        print()
+        console.print(table)
+        console.print()
 
     # Totals
     total_added = sum(s.lines_added for s in report.steps)
@@ -240,9 +258,10 @@ def print_report(report: RunReport) -> None:
     total_turns = report.total_turns()
     error_count = sum(1 for s in report.steps if s.is_error is True)
 
-    print(f"  {YELLOW}-- Totals {thin}{NC}")
-    print(f"  Lines changed: +{total_added} / -{total_deleted}")
-    print(f"  Total turns:   {total_turns}")
-    print(f"  Errors:        {error_count}")
-    print()
-    print(f"{BLUE}{sep}{NC}")
+    console.print(Rule("Totals", style="yellow"))
+    console.print(
+        f"  Lines changed:  [green]+{total_added}[/] / [red]-{total_deleted}[/]"
+    )
+    console.print(f"  Total turns:    {total_turns}")
+    console.print(f"  Errors:         {error_count}")
+    console.print()

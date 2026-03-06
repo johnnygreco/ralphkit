@@ -14,13 +14,19 @@ from ralphkit.config import (
 from ralphkit.report import RunReport, git_diff_stat, print_report
 from ralphkit.runner import run_claude
 from ralphkit.state import StateDir
-
-# ── Colors ──────────────────────────────────────────────────────────
-RED = "\033[0;31m"
-GREEN = "\033[0;32m"
-YELLOW = "\033[1;33m"
-BLUE = "\033[0;34m"
-NC = "\033[0m"
+from ralphkit.ui import (
+    console,
+    fmt_duration,
+    print_banner,
+    print_error,
+    print_indented_block,
+    print_kv,
+    print_outcome,
+    print_rule,
+    print_step_done,
+    print_step_start,
+    print_warning,
+)
 
 
 def _run_phase(prompt: str, model: str, system_prompt: str) -> dict | None:
@@ -28,7 +34,7 @@ def _run_phase(prompt: str, model: str, system_prompt: str) -> dict | None:
     try:
         return run_claude(prompt, model, system_prompt)
     except RuntimeError as e:
-        print(f"\n{RED}Error: {e}{NC}", file=sys.stderr)
+        print_error(f"Error: {e}")
         sys.exit(1)
 
 
@@ -154,14 +160,13 @@ def main() -> None:
     try:
         config = load_config(args.config)
     except ValueError as e:
-        print(f"{RED}Config error: {e}{NC}", file=sys.stderr)
+        print_error(f"Config error: {e}")
         sys.exit(1)
 
     if args.max_iterations is not None:
         if args.max_iterations < 1:
-            print(
-                f"{RED}Config error: max_iterations must be >= 1, got {args.max_iterations}{NC}",
-                file=sys.stderr,
+            print_error(
+                f"Config error: max_iterations must be >= 1, got {args.max_iterations}"
             )
             sys.exit(1)
         config = replace(config, max_iterations=args.max_iterations)
@@ -178,14 +183,14 @@ def main() -> None:
     if args.list_runs:
         runs = state.list_runs()
         if not runs:
-            print("No runs found.")
+            console.print("No runs found.")
         else:
             for run_dir in runs:
                 task_file = run_dir / "task.md"
                 first_line = ""
                 if task_file.is_file():
                     first_line = task_file.read_text().split("\n", 1)[0]
-                print(f"  #{run_dir.name}  {first_line}")
+                console.print(f"  [label]#{run_dir.name}[/]  {first_line}")
         sys.exit(0)
 
     if config.pipe:
@@ -203,43 +208,41 @@ def main() -> None:
 
     # ── Banner ──────────────────────────────────────────────────────
     is_pipe = bool(config.pipe)
-    print()
-    print(f"{BLUE}{'=' * 59}{NC}")
-    print(f"{BLUE}  RALPH {'PIPE' if is_pipe else 'LOOP'}{NC}")
-    print(f"{BLUE}{'=' * 59}{NC}")
-    print()
+    console.print()
+    print_banner(f"RALPH {'PIPE' if is_pipe else 'LOOP'}")
+    console.print()
     if task_content is not None:
         first_line = task_content.split("\n", 1)[0]
-        print(f"  {YELLOW}Task:{NC}      {first_line}")
-    print(f"  {YELLOW}Run:{NC}       #{state.path.name}")
-    print(f"  {YELLOW}Model:{NC}     {config.default_model}")
+        print_kv("Task", first_line)
+    print_kv("Run", f"#{state.path.name}")
+    print_kv("Model", config.default_model)
     if is_pipe:
-        print(f"  {YELLOW}Steps:{NC}     {len(config.pipe)}")
-        print(f"  {YELLOW}Pipe:{NC}      {_step_names(config.pipe)}")
+        print_kv("Steps", str(len(config.pipe)))
+        print_kv("Pipe", _step_names(config.pipe))
     else:
-        print(f"  {YELLOW}Max iter:{NC}  {config.max_iterations}")
-        print(f"  {YELLOW}Setup:{NC}     {_step_names(config.setup)}")
-        print(f"  {YELLOW}Loop:{NC}      {_step_names(config.loop)}")
-        print(f"  {YELLOW}Cleanup:{NC}   {_step_names(config.cleanup)}")
-    print()
+        print_kv("Max iter", str(config.max_iterations))
+        print_kv("Setup", _step_names(config.setup))
+        print_kv("Loop", _step_names(config.loop))
+        print_kv("Cleanup", _step_names(config.cleanup))
+    console.print()
 
     # ── Confirmation ────────────────────────────────────────────────
     if not args.force:
         if is_pipe:
-            print(
-                f"{YELLOW}This will run {len(config.pipe)} steps. Each step costs API credits.{NC}"
+            print_warning(
+                f"This will run {len(config.pipe)} steps. Each step costs API credits."
             )
         else:
-            print(
-                f"{YELLOW}Warning: This will run up to {config.max_iterations} iterations.{NC}"
+            print_warning(
+                f"Warning: This will run up to {config.max_iterations} iterations."
             )
-            print(f"{YELLOW}   Each step costs API credits.{NC}")
-        print()
+            print_warning("   Each step costs API credits.")
+        console.print()
         confirm = input("Proceed? (y/N) ").strip()
         if confirm.lower() not in ("y", "yes"):
-            print(f"{RED}Aborted.{NC}")
+            print_error("Aborted.")
             sys.exit(1)
-        print()
+        console.print()
 
     # ── Common template variables ───────────────────────────────────
     def _base_vars(step: StepConfig) -> dict[str, str]:
@@ -268,9 +271,6 @@ def main() -> None:
         result = _run_phase(prompt, model, system)
         return model, result
 
-    def _fmt_elapsed(elapsed: float) -> str:
-        return f"{elapsed:.1f}s"
-
     report = RunReport()
 
     def _finalize_report():
@@ -278,7 +278,7 @@ def main() -> None:
             report.total_duration_s = time.time() - start_time
             print_report(report)
             report.save(state.path / "report.json")
-            print(f"  Saved to {state.path / 'report.json'}")
+            console.print(f"  [dim]Saved to {state.path / 'report.json'}[/]")
         except Exception:
             pass
 
@@ -300,9 +300,9 @@ def main() -> None:
         blocked = state.is_blocked()
         if blocked:
             report.outcome = "BLOCKED"
-            print()
-            print(f"{RED}Blocked:{NC}")
-            print(blocked)
+            console.print()
+            console.print("[error]Blocked:[/]")
+            console.print(blocked)
             sys.exit(1)
 
     if is_pipe:
@@ -314,9 +314,7 @@ def main() -> None:
         try:
             for idx, step in enumerate(config.pipe, 1):
                 step_model = resolve_model(step, config.default_model)
-                print(
-                    f"  {YELLOW}[{idx}/{total_steps}] {step.step_name} ({step_model})...{NC}"
-                )
+                print_step_start(idx, total_steps, step.step_name, step_model)
                 before_diff = git_diff_stat()
                 t0 = time.time()
 
@@ -350,15 +348,15 @@ def main() -> None:
                     step, extra_vars=pipe_vars, system_suffix=handoff
                 )
                 _record_step(step, model, claude_out, t0, "pipe", before_diff)
-                print(f"  {GREEN}   Done. ({_fmt_elapsed(time.time() - t0)}){NC}")
+                print_step_done(fmt_duration(time.time() - t0))
 
                 _check_blocked()
 
             report.outcome = "PIPE_COMPLETE"
-            print()
-            print(f"{GREEN}{'=' * 59}{NC}")
-            print(f"{GREEN}  PIPE COMPLETE — {total_steps} steps finished{NC}")
-            print(f"{GREEN}{'=' * 59}{NC}")
+            console.print()
+            print_outcome(
+                f"PIPE COMPLETE \u2014 {total_steps} steps finished", success=True
+            )
             sys.exit(0)
         finally:
             if report.outcome is None:
@@ -367,25 +365,23 @@ def main() -> None:
 
     # ── SETUP phase ─────────────────────────────────────────────────
     if config.setup:
-        print(f"{BLUE}── Setup ──{NC}")
+        print_rule("Setup")
         total_setup = len(config.setup)
         for idx, step in enumerate(config.setup, 1):
-            print(f"  {YELLOW}[{idx}/{total_setup}] {step.step_name}...{NC}")
+            print_step_start(idx, total_setup, step.step_name)
             before_diff = git_diff_stat()
             t0 = time.time()
             model, claude_out = _run_step(step)
             _record_step(step, model, claude_out, t0, "setup", before_diff)
-            print(f"  {GREEN}   Done. ({_fmt_elapsed(time.time() - t0)}){NC}")
-        print()
+            print_step_done(fmt_duration(time.time() - t0))
+        console.print()
 
     # ── LOOP phase (with cleanup in finally) ────────────────────────
     total_loop_steps = len(config.loop)
     try:
         for i in range(1, config.max_iterations + 1):
-            print(f"{BLUE}{'-' * 59}{NC}")
-            print(f"{BLUE}  Iteration {i} / {config.max_iterations}{NC}")
-            print(f"{BLUE}{'-' * 59}{NC}")
-            print()
+            print_rule(f"Iteration {i} / {config.max_iterations}")
+            console.print()
 
             state.write_iteration(i)
             report.iterations_completed = i
@@ -395,83 +391,72 @@ def main() -> None:
 
             for idx, step in enumerate(config.loop, 1):
                 step_model = resolve_model(step, config.default_model)
-                print(
-                    f"  {YELLOW}[{idx}/{total_loop_steps}] {step.step_name} ({step_model})...{NC}"
-                )
+                print_step_start(idx, total_loop_steps, step.step_name, step_model)
                 before_diff = git_diff_stat()
                 t0 = time.time()
                 model, claude_out = _run_step(step, loop_vars)
                 _record_step(
                     step, model, claude_out, t0, "loop", before_diff, iteration=i
                 )
-                print(f"  {GREEN}   Done. ({_fmt_elapsed(time.time() - t0)}){NC}")
+                print_step_done(fmt_duration(time.time() - t0))
 
                 _check_blocked()
 
             # Show work summary if present
             summary = state.read_work_summary()
             if summary:
-                print()
-                print(f"  {YELLOW}   Summary:{NC}")
-                for line in summary.splitlines():
-                    print(f"     {line}")
-                print()
+                print_indented_block("Summary", summary)
 
-            print(
-                f"  Iteration {i} completed in {_fmt_elapsed(time.time() - iter_start)}"
+            console.print(
+                f"  [dim]Iteration {i} completed in {fmt_duration(time.time() - iter_start)}[/]"
             )
 
             # ── Check review result ─────────────────────────────────
             result = state.read_review_result()
             if result is None:
                 report.outcome = "ERROR"
-                print(f"{RED}Review failed: no review-result.md produced.{NC}")
+                console.print("[error]Review failed: no review-result.md produced.[/]")
                 sys.exit(1)
 
             if result == VERDICT_SHIP:
                 report.outcome = "SHIP"
-                print(f"{GREEN}{'=' * 59}{NC}")
-                print(f"{GREEN}  SHIP — Task completed in {i} iteration(s)!{NC}")
-                print(f"{GREEN}{'=' * 59}{NC}")
+                print_outcome(
+                    f"SHIP \u2014 Task completed in {i} iteration(s)!", success=True
+                )
                 sys.exit(0)
             elif result == VERDICT_REVISE:
-                print(f"  {YELLOW}REVISE — Reviewer wants changes.{NC}")
+                console.print("  [warning]REVISE \u2014 Reviewer wants changes.[/]")
                 feedback = state.read_review_feedback()
                 if feedback:
-                    print()
-                    print(f"  {YELLOW}   Feedback:{NC}")
-                    for line in feedback.splitlines():
-                        print(f"     {line}")
-                    print()
+                    print_indented_block("Feedback", feedback)
                 state.clean_for_next_iteration()
             else:
                 report.outcome = "ERROR"
-                print(f"{RED}Unexpected review result: '{result}'{NC}")
+                console.print(f"[error]Unexpected review result: '{result}'[/]")
                 sys.exit(1)
 
         # ── Max iterations reached ──────────────────────────────────
         report.outcome = "MAX_ITERATIONS"
-        print()
-        print(f"{RED}{'=' * 59}{NC}")
-        print(
-            f"{RED}  Max iterations ({config.max_iterations}) reached without SHIP.{NC}"
+        console.print()
+        print_outcome(
+            f"Max iterations ({config.max_iterations}) reached without SHIP.",
+            success=False,
         )
-        print(f"{RED}{'=' * 59}{NC}")
         sys.exit(1)
     finally:
         if report.outcome is None:
             report.outcome = "ERROR"
         # ── CLEANUP phase (always runs) ─────────────────────────────
         if config.cleanup:
-            print()
-            print(f"{BLUE}── Cleanup ──{NC}")
+            console.print()
+            print_rule("Cleanup")
             total_cleanup = len(config.cleanup)
             for idx, step in enumerate(config.cleanup, 1):
-                print(f"  {YELLOW}[{idx}/{total_cleanup}] {step.step_name}...{NC}")
+                print_step_start(idx, total_cleanup, step.step_name)
                 before_diff = git_diff_stat()
                 t0 = time.time()
                 model, claude_out = _run_step(step)
                 _record_step(step, model, claude_out, t0, "cleanup", before_diff)
-                print(f"  {GREEN}   Done. ({_fmt_elapsed(time.time() - t0)}){NC}")
-            print()
+                print_step_done(fmt_duration(time.time() - t0))
+            console.print()
         _finalize_report()

@@ -1,4 +1,3 @@
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -177,9 +176,10 @@ def load_config(path: str | Path | None = None) -> RalphConfig:
     }
     unknown = set(data) - valid_keys
     if unknown:
-        print(
-            f"Warning: unknown config keys ignored: {', '.join(sorted(unknown))}",
-            file=sys.stderr,
+        from ralphkit.ui import err_console
+
+        err_console.print(
+            f"[warning]Warning: unknown config keys ignored: {', '.join(sorted(unknown))}[/]"
         )
 
     max_iterations = int(data.get("max_iterations", DEFAULT_MAX_ITERATIONS))
