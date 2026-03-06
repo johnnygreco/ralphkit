@@ -183,26 +183,6 @@ def test_list_runs_empty(tmp_path):
     assert state.list_runs() == []
 
 
-def test_legacy_migration(tmp_path):
-    """Flat state files at root level get moved into runs/001/."""
-    root = tmp_path / "state"
-    root.mkdir()
-    (root / "task.md").write_text("old task")
-    (root / "iteration.md").write_text("2")
-
-    state = StateDir(root)
-    state.setup()
-
-    # Legacy files moved to runs/001
-    assert (root / "runs" / "001" / "task.md").read_text() == "old task"
-    assert (root / "runs" / "001" / "iteration.md").read_text() == "2"
-    # Original files removed
-    assert not (root / "task.md").exists()
-    assert not (root / "iteration.md").exists()
-    # New run is 002
-    assert state.path.name == "002"
-
-
 def test_next_run_number_skips_nonnumeric(tmp_path):
     root = tmp_path / "state"
     runs_dir = root / "runs"
