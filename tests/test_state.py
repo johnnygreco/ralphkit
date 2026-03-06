@@ -114,6 +114,17 @@ def test_read_review_feedback_returns_content(tmp_path):
     assert state.read_review_feedback() == "  feedback\n"  # not stripped
 
 
+def test_read_task_returns_content(tmp_path):
+    state = StateDir(tmp_path)
+    (tmp_path / "task.md").write_text("my task")
+    assert state.read_task() == "my task"
+
+
+def test_read_task_returns_none_when_missing(tmp_path):
+    state = StateDir(tmp_path)
+    assert state.read_task() is None
+
+
 def test_default_state_dir_path():
     state = StateDir()
     assert str(state.path) == ".ralphkit"

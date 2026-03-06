@@ -7,6 +7,23 @@ from ralphkit.cli import main, _render_prompt, _run_phase, _step_names
 from ralphkit.config import STATE_DIR, VERDICT_REVISE, VERDICT_SHIP, StepConfig
 
 
+# ── Helper ──────────────────────────────────────────────────────────
+
+
+def _minimal_config_with_two_loop_steps():
+    return """\
+max_iterations: 1
+default_model: opus
+loop:
+  - step_name: worker
+    task_prompt: "Work."
+    system_prompt: "System."
+  - step_name: reviewer
+    task_prompt: "Review."
+    system_prompt: "System."
+"""
+
+
 # ── _render_prompt ───────────────────────────────────────────────────
 
 
@@ -337,3 +354,171 @@ cleanup:
     assert "Init." in calls[0]
     assert "Work." in calls[1]
     assert "Cleanup." in calls[2]
+
+
+# ── task.md conflict guard ──────────────────────────────────────────
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_existing_task_different_content_exits(mock_run, monkeypatch, tmp_path):
+    """Existing task.md with different content -> exit 1."""
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text(_minimal_config_yaml())
+    monkeypatch.setattr(
+        sys, "argv", ["ralph-loop", "new task", "--config", str(cfg), "-f"]
+    )
+    monkeypatch.chdir(tmp_path)
+
+    state_dir = tmp_path / STATE_DIR
+    state_dir.mkdir()
+    (state_dir / "task.md").write_text("old task")
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+    mock_run.assert_not_called()
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_existing_task_same_content_proceeds(mock_run, monkeypatch, tmp_path):
+    """Existing task.md with same content -> proceeds normally."""
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text(_minimal_config_yaml())
+    monkeypatch.setattr(
+        sys, "argv", ["ralph-loop", "do stuff", "--config", str(cfg), "-f"]
+    )
+    monkeypatch.chdir(tmp_path)
+
+    state_dir = tmp_path / STATE_DIR
+    state_dir.mkdir()
+    (state_dir / "task.md").write_text("do stuff")
+
+    def fake_claude(prompt, model, system_prompt):
+        (state_dir / "review-result.md").write_text(VERDICT_SHIP)
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_no_existing_task_proceeds(mock_run, monkeypatch, tmp_path):
+    """No existing task.md -> proceeds normally."""
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text(_minimal_config_yaml())
+    monkeypatch.setattr(
+        sys, "argv", ["ralph-loop", "do stuff", "--config", str(cfg), "-f"]
+    )
+    monkeypatch.chdir(tmp_path)
+
+    state_dir = tmp_path / STATE_DIR
+
+    def fake_claude(prompt, model, system_prompt):
+        state_dir.mkdir(exist_ok=True)
+        (state_dir / "review-result.md").write_text(VERDICT_SHIP)
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_existing_empty_task_proceeds(mock_run, monkeypatch, tmp_path):
+    """Existing but empty task.md -> proceeds normally."""
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text(_minimal_config_yaml())
+    monkeypatch.setattr(
+        sys, "argv", ["ralph-loop", "do stuff", "--config", str(cfg), "-f"]
+    )
+    monkeypatch.chdir(tmp_path)
+
+    state_dir = tmp_path / STATE_DIR
+    state_dir.mkdir()
+    (state_dir / "task.md").write_text("")
+
+    def fake_claude(prompt, model, system_prompt):
+        (state_dir / "review-result.md").write_text(VERDICT_SHIP)
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+
+
+# ── Timing and step numbering ──────────────────────────────────────
+
+
+@patch("ralphkit.cli.time")
+@patch("ralphkit.cli.run_claude")
+def test_main_shows_step_numbering(mock_run, mock_time, monkeypatch, tmp_path, capsys):
+    """Step numbering [N/M] appears in output."""
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text(_minimal_config_with_two_loop_steps())
+    monkeypatch.setattr(
+        sys, "argv", ["ralph-loop", "do stuff", "--config", str(cfg), "-f"]
+    )
+    monkeypatch.chdir(tmp_path)
+
+    state_dir = tmp_path / STATE_DIR
+    mock_time.time.return_value = 100.0
+
+    def fake_claude(prompt, model, system_prompt):
+        state_dir.mkdir(exist_ok=True)
+        if "Review." in prompt:
+            (state_dir / "review-result.md").write_text(VERDICT_SHIP)
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+
+    out = capsys.readouterr().out
+    assert "[1/2]" in out
+    assert "[2/2]" in out
+
+
+@patch("ralphkit.cli.time")
+@patch("ralphkit.cli.run_claude")
+def test_main_shows_timing(mock_run, mock_time, monkeypatch, tmp_path, capsys):
+    """Timing output appears for steps, iteration, and total."""
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text(_minimal_config_yaml())
+    monkeypatch.setattr(
+        sys, "argv", ["ralph-loop", "do stuff", "--config", str(cfg), "-f"]
+    )
+    monkeypatch.chdir(tmp_path)
+
+    state_dir = tmp_path / STATE_DIR
+    # time.time() calls: start_time, iter_start, step_t0, step_end(x2), iter_end, total(x2)
+    mock_time.time.return_value = 142.1
+    # Override first few calls to control step elapsed
+    call_count = {"n": 0}
+    times = [100.0, 100.0, 100.0, 114.3]  # start, iter_start, step_t0, step_end
+
+    def fake_time():
+        call_count["n"] += 1
+        if call_count["n"] <= len(times):
+            return times[call_count["n"] - 1]
+        return 142.1
+
+    mock_time.time.side_effect = fake_time
+
+    def fake_claude(prompt, model, system_prompt):
+        state_dir.mkdir(exist_ok=True)
+        (state_dir / "review-result.md").write_text(VERDICT_SHIP)
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+
+    out = capsys.readouterr().out
+    assert "14.3s" in out  # step elapsed
+    assert "Total elapsed:" in out
