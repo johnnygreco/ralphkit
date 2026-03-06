@@ -197,7 +197,7 @@ See [`configs/example.yaml`](configs/example.yaml) and [`configs/example-pipe.ya
 ### Loop
 
 ```
- Setup (once)          Loop (iterate)              Cleanup (once, always)
+Setup (once)         Loop (iterate)           Cleanup (once)
 ┌──────────┐    ┌───────────────────────┐    ┌──────────────┐
 │ step 1   │    │ step 1 (e.g. worker)  │    │ step 1       │
 │ step 2   │    │ step 2 (e.g. reviewer)│    │ ...          │
