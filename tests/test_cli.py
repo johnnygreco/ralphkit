@@ -111,14 +111,6 @@ loop:
 
 
 @patch("ralphkit.cli.run_claude")
-def test_main_missing_config_arg(mock_run, monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["ralph-loop", "do stuff"])
-    with pytest.raises(SystemExit) as exc_info:
-        main()
-    assert exc_info.value.code == 2
-
-
-@patch("ralphkit.cli.run_claude")
 def test_main_missing_task_arg(mock_run, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["ralph-loop", "--config", "x.yaml"])
     with pytest.raises(SystemExit) as exc_info:

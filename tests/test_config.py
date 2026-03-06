@@ -1,7 +1,13 @@
 import pytest
 
 from ralphkit.cli import resolve_task
-from ralphkit.config import StepConfig, load_config, resolve_model
+from ralphkit.config import (
+    DEFAULT_MAX_ITERATIONS,
+    DEFAULT_MODEL,
+    StepConfig,
+    load_config,
+    resolve_model,
+)
 
 
 def test_load_config_valid_full(tmp_path):
@@ -69,26 +75,40 @@ def test_load_config_missing_file(tmp_path):
         load_config(tmp_path / "nonexistent.yaml")
 
 
-def test_load_config_missing_loop(tmp_path):
-    cfg_file = tmp_path / "ralph.yaml"
-    cfg_file.write_text("max_iterations: 5\ndefault_model: opus\n")
-    with pytest.raises(ValueError, match="missing required key 'loop'"):
-        load_config(cfg_file)
-
-
-def test_load_config_missing_default_model(tmp_path):
+def test_load_config_no_loop_uses_default(tmp_path):
+    """Config without loop section uses default loop steps."""
     cfg_file = tmp_path / "ralph.yaml"
     cfg_file.write_text(
         """\
-max_iterations: 5
-loop:
-  - step_name: worker
-    task_prompt: "Work."
-    system_prompt: "System."
+setup:
+  - step_name: init
+    task_prompt: "Init."
+    system_prompt: "Setup."
 """
     )
-    with pytest.raises(ValueError, match="missing required key 'default_model'"):
-        load_config(cfg_file)
+    config = load_config(cfg_file)
+    assert len(config.loop) == 2
+    assert config.loop[0].step_name == "worker"
+    assert config.loop[1].step_name == "reviewer"
+    assert config.max_iterations == DEFAULT_MAX_ITERATIONS
+    assert config.default_model == DEFAULT_MODEL
+    assert len(config.setup) == 1
+
+
+def test_load_config_overrides_loop(tmp_path):
+    """Config with loop section overrides the default."""
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+loop:
+  - step_name: custom_worker
+    task_prompt: "Custom work."
+    system_prompt: "Custom system."
+"""
+    )
+    config = load_config(cfg_file)
+    assert len(config.loop) == 1
+    assert config.loop[0].step_name == "custom_worker"
 
 
 def test_load_config_warns_unknown_keys(tmp_path, capsys):
@@ -112,8 +132,6 @@ def test_step_missing_required_fields(tmp_path):
     cfg_file = tmp_path / "ralph.yaml"
     cfg_file.write_text(
         """\
-max_iterations: 5
-default_model: opus
 loop:
   - step_name: worker
     task_prompt: "Work."
@@ -129,7 +147,6 @@ def test_load_config_invalid_max_iterations(tmp_path, value):
     cfg_file.write_text(
         f"""\
 max_iterations: {value}
-default_model: opus
 loop:
   - step_name: worker
     task_prompt: "Work."
@@ -140,9 +157,21 @@ loop:
         load_config(cfg_file)
 
 
-def test_load_config_none():
-    with pytest.raises(ValueError, match="config file is required"):
-        load_config(None)
+def test_load_config_none_returns_defaults():
+    config = load_config(None)
+    assert config.max_iterations == DEFAULT_MAX_ITERATIONS
+    assert config.default_model == DEFAULT_MODEL
+    assert len(config.loop) == 2
+    assert config.loop[0].step_name == "worker"
+    assert config.loop[1].step_name == "reviewer"
+    assert config.setup == []
+    assert config.cleanup == []
+
+
+def test_load_config_no_args_returns_defaults():
+    config = load_config()
+    assert config.max_iterations == DEFAULT_MAX_ITERATIONS
+    assert len(config.loop) == 2
 
 
 def test_resolve_model_fallback():
@@ -175,8 +204,6 @@ def test_load_config_empty_loop(tmp_path):
     cfg_file = tmp_path / "ralph.yaml"
     cfg_file.write_text(
         """\
-max_iterations: 5
-default_model: opus
 loop: []
 """
     )
@@ -184,34 +211,20 @@ loop: []
         load_config(cfg_file)
 
 
-def test_load_config_missing_max_iterations(tmp_path):
-    cfg_file = tmp_path / "ralph.yaml"
-    cfg_file.write_text(
-        """\
-default_model: opus
-loop:
-  - step_name: worker
-    task_prompt: "Work."
-    system_prompt: "System."
-"""
-    )
-    with pytest.raises(ValueError, match="missing required key 'max_iterations'"):
-        load_config(cfg_file)
-
-
 def test_load_config_empty_yaml(tmp_path):
+    """Empty YAML file uses all defaults."""
     cfg_file = tmp_path / "ralph.yaml"
     cfg_file.write_text("")
-    with pytest.raises(ValueError, match="missing required key"):
-        load_config(cfg_file)
+    config = load_config(cfg_file)
+    assert config.max_iterations == DEFAULT_MAX_ITERATIONS
+    assert config.default_model == DEFAULT_MODEL
+    assert len(config.loop) == 2
 
 
 def test_load_config_step_missing_step_name(tmp_path):
     cfg_file = tmp_path / "ralph.yaml"
     cfg_file.write_text(
         """\
-max_iterations: 5
-default_model: opus
 loop:
   - task_prompt: "Work."
     system_prompt: "System."
@@ -225,8 +238,6 @@ def test_load_config_step_missing_task_prompt(tmp_path):
     cfg_file = tmp_path / "ralph.yaml"
     cfg_file.write_text(
         """\
-max_iterations: 5
-default_model: opus
 loop:
   - step_name: worker
     system_prompt: "System."
@@ -240,8 +251,6 @@ def test_load_config_step_model_none_by_default(tmp_path):
     cfg_file = tmp_path / "ralph.yaml"
     cfg_file.write_text(
         """\
-max_iterations: 5
-default_model: opus
 loop:
   - step_name: worker
     task_prompt: "Work."
@@ -256,8 +265,6 @@ def test_parse_steps_setup_section_error_message(tmp_path):
     cfg_file = tmp_path / "ralph.yaml"
     cfg_file.write_text(
         """\
-max_iterations: 5
-default_model: opus
 setup:
   - step_name: init
 loop:
@@ -275,7 +282,6 @@ def test_load_config_max_iterations_coerced_to_int(tmp_path):
     cfg_file.write_text(
         """\
 max_iterations: "3"
-default_model: opus
 loop:
   - step_name: worker
     task_prompt: "Work."

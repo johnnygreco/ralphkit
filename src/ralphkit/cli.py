@@ -66,8 +66,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--config",
-        required=True,
-        help="Path to YAML config file",
+        default=None,
+        help="Path to YAML config file (optional; uses built-in defaults if omitted)",
     )
     parser.add_argument(
         "--max-iterations",
