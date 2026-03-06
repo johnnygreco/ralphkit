@@ -88,12 +88,12 @@ setup:
 # Optional: overrides the built-in worker/reviewer loop
 loop:
   - step_name: worker
-    task_prompt: "Read .ralphkit/task.md and begin working. This is iteration {iteration}."
+    task_prompt: "Read {state_dir}/task.md and begin working. This is iteration {iteration} of {max_iterations}."
     system_prompt: "You are a worker in a RALPH LOOP..."
     model: opus
   - step_name: reviewer
-    task_prompt: "Review the work done for the task in .ralphkit/task.md."
-    system_prompt: "You are a code reviewer..."
+    task_prompt: "Review the work done for the task in {state_dir}/task.md. Read the project files, run tests, then write your verdict to {state_dir}/review-result.md"
+    system_prompt: "You are a code reviewer in a RALPH LOOP..."
     model: sonnet
 
 # Optional: runs once after the loop (always, even on failure)
