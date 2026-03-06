@@ -11,6 +11,7 @@ from ralphkit.config import (
     load_config,
     resolve_model,
 )
+from ralphkit.report import RunReport, git_diff_stat, print_report
 from ralphkit.runner import run_claude
 from ralphkit.state import StateDir
 
@@ -22,10 +23,10 @@ BLUE = "\033[0;34m"
 NC = "\033[0m"
 
 
-def _run_phase(prompt: str, model: str, system_prompt: str) -> None:
+def _run_phase(prompt: str, model: str, system_prompt: str) -> dict | None:
     """Run a claude phase, exiting on failure."""
     try:
-        run_claude(prompt, model, system_prompt)
+        return run_claude(prompt, model, system_prompt)
     except RuntimeError as e:
         print(f"\n{RED}Error: {e}{NC}", file=sys.stderr)
         sys.exit(1)
@@ -254,8 +255,8 @@ def main() -> None:
         step: StepConfig,
         extra_vars: dict[str, str] | None = None,
         system_suffix: str = "",
-    ) -> str:
-        """Run a step and return the resolved model name."""
+    ) -> tuple[str, dict | None]:
+        """Run a step and return (model, claude_json_output)."""
         variables = _base_vars(step)
         if extra_vars:
             variables.update(extra_vars)
@@ -264,22 +265,44 @@ def main() -> None:
         if system_suffix:
             system = system + "\n\n" + system_suffix
         model = variables["model"]
-        _run_phase(prompt, model, system)
-        return model
+        result = _run_phase(prompt, model, system)
+        return model, result
 
     def _fmt_elapsed(elapsed: float) -> str:
         return f"{elapsed:.1f}s"
 
-    def _print_total_elapsed() -> None:
-        print(f"\n  Total elapsed: {_fmt_elapsed(time.time() - start_time)}")
+    report = RunReport()
+
+    def _finalize_report():
+        try:
+            report.total_duration_s = time.time() - start_time
+            print_report(report)
+            report.save(state.path / "report.json")
+            print(f"  Saved to {state.path / 'report.json'}")
+        except Exception:
+            pass
+
+    def _record_step(step, model, claude_out, t0, phase, before_diff, iteration=None):
+        before_add, before_del = before_diff
+        after_add, after_del = git_diff_stat()
+        report.record_step(
+            step_name=step.step_name,
+            model=model,
+            phase=phase,
+            duration_s=time.time() - t0,
+            iteration=iteration,
+            claude_output=claude_out,
+            lines_added=max(0, after_add - before_add),
+            lines_deleted=max(0, after_del - before_del),
+        )
 
     def _check_blocked() -> None:
         blocked = state.is_blocked()
         if blocked:
+            report.outcome = "BLOCKED"
             print()
             print(f"{RED}Blocked:{NC}")
             print(blocked)
-            _print_total_elapsed()
             sys.exit(1)
 
     if is_pipe:
@@ -288,50 +311,59 @@ def main() -> None:
         task_str = task_content if task_content is not None else ""
         state_dir_str = str(state.active_path)
 
-        for idx, step in enumerate(config.pipe, 1):
-            step_model = resolve_model(step, config.default_model)
-            print(
-                f"  {YELLOW}[{idx}/{total_steps}] {step.step_name} ({step_model})...{NC}"
-            )
-            t0 = time.time()
+        try:
+            for idx, step in enumerate(config.pipe, 1):
+                step_model = resolve_model(step, config.default_model)
+                print(
+                    f"  {YELLOW}[{idx}/{total_steps}] {step.step_name} ({step_model})...{NC}"
+                )
+                before_diff = git_diff_stat()
+                t0 = time.time()
 
-            prev_step_name = config.pipe[idx - 2].step_name if idx > 1 else ""
-            next_step_name = config.pipe[idx].step_name if idx < total_steps else ""
+                prev_step_name = config.pipe[idx - 2].step_name if idx > 1 else ""
+                next_step_name = config.pipe[idx].step_name if idx < total_steps else ""
 
-            pipe_vars: dict[str, str] = {
-                "step_index": str(idx),
-                "total_steps": str(total_steps),
-                "prev_step_name": prev_step_name,
-                "next_step_name": next_step_name,
-                "task": task_str,
-            }
+                pipe_vars: dict[str, str] = {
+                    "step_index": str(idx),
+                    "total_steps": str(total_steps),
+                    "prev_step_name": prev_step_name,
+                    "next_step_name": next_step_name,
+                    "task": task_str,
+                }
 
-            # Resolve and render handoff prompt
-            raw_handoff = _resolve_handoff(
-                step,
-                config.handoff_prompt,
-                idx,
-                total_steps,
-                config.pipe,
-                state_dir_str,
-            )
-            handoff = (
-                _render_prompt(raw_handoff, pipe_vars | _base_vars(step))
-                if raw_handoff
-                else ""
-            )
+                # Resolve and render handoff prompt
+                raw_handoff = _resolve_handoff(
+                    step,
+                    config.handoff_prompt,
+                    idx,
+                    total_steps,
+                    config.pipe,
+                    state_dir_str,
+                )
+                handoff = (
+                    _render_prompt(raw_handoff, pipe_vars | _base_vars(step))
+                    if raw_handoff
+                    else ""
+                )
 
-            _run_step(step, extra_vars=pipe_vars, system_suffix=handoff)
-            print(f"  {GREEN}   Done. ({_fmt_elapsed(time.time() - t0)}){NC}")
+                model, claude_out = _run_step(
+                    step, extra_vars=pipe_vars, system_suffix=handoff
+                )
+                _record_step(step, model, claude_out, t0, "pipe", before_diff)
+                print(f"  {GREEN}   Done. ({_fmt_elapsed(time.time() - t0)}){NC}")
 
-            _check_blocked()
+                _check_blocked()
 
-        print()
-        print(f"{GREEN}{'=' * 59}{NC}")
-        print(f"{GREEN}  PIPE COMPLETE — {total_steps} steps finished{NC}")
-        print(f"{GREEN}{'=' * 59}{NC}")
-        _print_total_elapsed()
-        sys.exit(0)
+            report.outcome = "PIPE_COMPLETE"
+            print()
+            print(f"{GREEN}{'=' * 59}{NC}")
+            print(f"{GREEN}  PIPE COMPLETE — {total_steps} steps finished{NC}")
+            print(f"{GREEN}{'=' * 59}{NC}")
+            sys.exit(0)
+        finally:
+            if report.outcome is None:
+                report.outcome = "ERROR"
+            _finalize_report()
 
     # ── SETUP phase ─────────────────────────────────────────────────
     if config.setup:
@@ -339,8 +371,10 @@ def main() -> None:
         total_setup = len(config.setup)
         for idx, step in enumerate(config.setup, 1):
             print(f"  {YELLOW}[{idx}/{total_setup}] {step.step_name}...{NC}")
+            before_diff = git_diff_stat()
             t0 = time.time()
-            _run_step(step)
+            model, claude_out = _run_step(step)
+            _record_step(step, model, claude_out, t0, "setup", before_diff)
             print(f"  {GREEN}   Done. ({_fmt_elapsed(time.time() - t0)}){NC}")
         print()
 
@@ -354,6 +388,7 @@ def main() -> None:
             print()
 
             state.write_iteration(i)
+            report.iterations_completed = i
             iter_start = time.time()
 
             loop_vars = {"iteration": str(i)}
@@ -363,8 +398,10 @@ def main() -> None:
                 print(
                     f"  {YELLOW}[{idx}/{total_loop_steps}] {step.step_name} ({step_model})...{NC}"
                 )
+                before_diff = git_diff_stat()
                 t0 = time.time()
-                _run_step(step, loop_vars)
+                model, claude_out = _run_step(step, loop_vars)
+                _record_step(step, model, claude_out, t0, "loop", before_diff, iteration=i)
                 print(f"  {GREEN}   Done. ({_fmt_elapsed(time.time() - t0)}){NC}")
 
                 _check_blocked()
@@ -385,15 +422,15 @@ def main() -> None:
             # ── Check review result ─────────────────────────────────
             result = state.read_review_result()
             if result is None:
+                report.outcome = "ERROR"
                 print(f"{RED}Review failed: no review-result.md produced.{NC}")
-                _print_total_elapsed()
                 sys.exit(1)
 
             if result == VERDICT_SHIP:
+                report.outcome = "SHIP"
                 print(f"{GREEN}{'=' * 59}{NC}")
                 print(f"{GREEN}  SHIP — Task completed in {i} iteration(s)!{NC}")
                 print(f"{GREEN}{'=' * 59}{NC}")
-                _print_total_elapsed()
                 sys.exit(0)
             elif result == VERDICT_REVISE:
                 print(f"  {YELLOW}REVISE — Reviewer wants changes.{NC}")
@@ -406,20 +443,22 @@ def main() -> None:
                     print()
                 state.clean_for_next_iteration()
             else:
+                report.outcome = "ERROR"
                 print(f"{RED}Unexpected review result: '{result}'{NC}")
-                _print_total_elapsed()
                 sys.exit(1)
 
         # ── Max iterations reached ──────────────────────────────────
+        report.outcome = "MAX_ITERATIONS"
         print()
         print(f"{RED}{'=' * 59}{NC}")
         print(
             f"{RED}  Max iterations ({config.max_iterations}) reached without SHIP.{NC}"
         )
         print(f"{RED}{'=' * 59}{NC}")
-        _print_total_elapsed()
         sys.exit(1)
     finally:
+        if report.outcome is None:
+            report.outcome = "ERROR"
         # ── CLEANUP phase (always runs) ─────────────────────────────
         if config.cleanup:
             print()
@@ -427,7 +466,10 @@ def main() -> None:
             total_cleanup = len(config.cleanup)
             for idx, step in enumerate(config.cleanup, 1):
                 print(f"  {YELLOW}[{idx}/{total_cleanup}] {step.step_name}...{NC}")
+                before_diff = git_diff_stat()
                 t0 = time.time()
-                _run_step(step)
+                model, claude_out = _run_step(step)
+                _record_step(step, model, claude_out, t0, "cleanup", before_diff)
                 print(f"  {GREEN}   Done. ({_fmt_elapsed(time.time() - t0)}){NC}")
             print()
+        _finalize_report()

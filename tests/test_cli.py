@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -192,6 +193,13 @@ def test_main_ship_on_first_iteration(mock_run, monkeypatch, tmp_path):
     with pytest.raises(SystemExit) as exc_info:
         main()
     assert exc_info.value.code == 0
+
+    # report.json should be written
+    report_path = tmp_path / STATE_DIR / "runs" / "001" / "report.json"
+    assert report_path.exists()
+    data = json.loads(report_path.read_text())
+    assert data["outcome"] == "SHIP"
+    assert isinstance(data["steps"], list)
 
 
 @patch("ralphkit.cli.run_claude")
@@ -519,7 +527,7 @@ def test_main_shows_timing(mock_run, mock_time, monkeypatch, tmp_path, capsys):
 
     out = capsys.readouterr().out
     assert "14.3s" in out  # step elapsed
-    assert "Total elapsed:" in out
+    assert "Total time:" in out
 
 
 # ── Run directory invariants ─────────────────────────────────────────
@@ -667,6 +675,13 @@ def test_main_pipe_runs_all_steps(mock_run, monkeypatch, tmp_path):
         main()
     assert exc_info.value.code == 0
     assert len(calls) == 3
+
+    # report.json should be written for pipe runs too
+    report_path = tmp_path / STATE_DIR / "runs" / "001" / "report.json"
+    assert report_path.exists()
+    data = json.loads(report_path.read_text())
+    assert data["outcome"] == "PIPE_COMPLETE"
+    assert len(data["steps"]) == 3
 
 
 @patch("ralphkit.cli.run_claude")

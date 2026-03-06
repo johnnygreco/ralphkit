@@ -24,6 +24,8 @@ def test_run_claude_calls_subprocess_with_correct_args(mock_run):
         "--append-system-prompt",
         "be helpful",
         "--dangerously-skip-permissions",
+        "--output-format",
+        "json",
     ]
 
 
@@ -31,7 +33,7 @@ def test_run_claude_calls_subprocess_with_correct_args(mock_run):
 def test_run_claude_passes_subprocess_options(mock_run):
     run_claude("p", "m", "s")
     _, kwargs = mock_run.call_args
-    assert kwargs["stdout"] is subprocess.DEVNULL
+    assert kwargs["stdout"] is subprocess.PIPE
     assert kwargs["stderr"] is subprocess.DEVNULL
     assert kwargs["check"] is True
     assert kwargs["timeout"] == TIMEOUT_SECONDS
@@ -61,7 +63,27 @@ def test_run_claude_env_overrides_existing_disable_auto_memory(mock_run, monkeyp
 
 
 @patch("ralphkit.runner.subprocess.run")
-def test_run_claude_success_returns_none(mock_run):
+def test_run_claude_success_returns_parsed_json(mock_run):
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout=b'{"type":"result","num_turns":1}'
+    )
+    result = run_claude("p", "m", "s")
+    assert result == {"type": "result", "num_turns": 1}
+
+
+@patch("ralphkit.runner.subprocess.run")
+def test_run_claude_returns_none_on_invalid_json(mock_run):
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout=b"not json"
+    )
+    assert run_claude("p", "m", "s") is None
+
+
+@patch("ralphkit.runner.subprocess.run")
+def test_run_claude_returns_none_on_empty_stdout(mock_run):
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout=b""
+    )
     assert run_claude("p", "m", "s") is None
 
 
