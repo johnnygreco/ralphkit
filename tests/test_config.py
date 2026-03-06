@@ -350,7 +350,9 @@ setup:
     system_prompt: "S."
 """
     )
-    with pytest.raises(ValueError, match="pipe configs cannot have 'setup' or 'cleanup'"):
+    with pytest.raises(
+        ValueError, match="pipe configs cannot have 'setup' or 'cleanup'"
+    ):
         load_config(cfg_file)
 
 
@@ -368,7 +370,9 @@ cleanup:
     system_prompt: "S."
 """
     )
-    with pytest.raises(ValueError, match="pipe configs cannot have 'setup' or 'cleanup'"):
+    with pytest.raises(
+        ValueError, match="pipe configs cannot have 'setup' or 'cleanup'"
+    ):
         load_config(cfg_file)
 
 

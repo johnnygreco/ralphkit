@@ -308,9 +308,18 @@ def main() -> None:
 
             # Resolve and render handoff prompt
             raw_handoff = _resolve_handoff(
-                step, config.handoff_prompt, idx, total_steps, config.pipe, state_dir_str
+                step,
+                config.handoff_prompt,
+                idx,
+                total_steps,
+                config.pipe,
+                state_dir_str,
             )
-            handoff = _render_prompt(raw_handoff, pipe_vars | _base_vars(step)) if raw_handoff else ""
+            handoff = (
+                _render_prompt(raw_handoff, pipe_vars | _base_vars(step))
+                if raw_handoff
+                else ""
+            )
 
             _run_step(step, extra_vars=pipe_vars, system_suffix=handoff)
             print(f"  {GREEN}   Done. ({_fmt_elapsed(time.time() - t0)}){NC}")

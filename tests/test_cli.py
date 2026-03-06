@@ -653,9 +653,7 @@ def test_main_pipe_runs_all_steps(mock_run, monkeypatch, tmp_path):
     """Pipe config runs all steps exactly once and exits 0."""
     cfg = tmp_path / "pipe.yaml"
     cfg.write_text(_pipe_config_yaml())
-    monkeypatch.setattr(
-        sys, "argv", ["ralph", "--config", str(cfg), "-f"]
-    )
+    monkeypatch.setattr(sys, "argv", ["ralph", "--config", str(cfg), "-f"])
     monkeypatch.chdir(tmp_path)
 
     calls = []
@@ -676,9 +674,7 @@ def test_main_pipe_no_task_succeeds(mock_run, monkeypatch, tmp_path):
     """Pipe config with no task arg succeeds."""
     cfg = tmp_path / "pipe.yaml"
     cfg.write_text(_pipe_config_yaml())
-    monkeypatch.setattr(
-        sys, "argv", ["ralph", "--config", str(cfg), "-f"]
-    )
+    monkeypatch.setattr(sys, "argv", ["ralph", "--config", str(cfg), "-f"])
     monkeypatch.chdir(tmp_path)
 
     mock_run.side_effect = lambda *a: None
@@ -727,9 +723,7 @@ def test_main_pipe_blocked_aborts(mock_run, monkeypatch, tmp_path):
     """Blocked state during pipe execution exits 1."""
     cfg = tmp_path / "pipe.yaml"
     cfg.write_text(_pipe_config_yaml())
-    monkeypatch.setattr(
-        sys, "argv", ["ralph", "--config", str(cfg), "-f"]
-    )
+    monkeypatch.setattr(sys, "argv", ["ralph", "--config", str(cfg), "-f"])
     monkeypatch.chdir(tmp_path)
 
     state_dir = tmp_path / STATE_DIR / "current"
@@ -749,9 +743,7 @@ def test_main_pipe_shows_banner(mock_run, monkeypatch, tmp_path, capsys):
     """Pipe banner shows RALPH PIPE and step names."""
     cfg = tmp_path / "pipe.yaml"
     cfg.write_text(_pipe_config_yaml())
-    monkeypatch.setattr(
-        sys, "argv", ["ralph", "--config", str(cfg), "-f"]
-    )
+    monkeypatch.setattr(sys, "argv", ["ralph", "--config", str(cfg), "-f"])
     monkeypatch.chdir(tmp_path)
 
     mock_run.side_effect = lambda *a: None
@@ -783,9 +775,7 @@ pipe:
     system_prompt: "You are step2."
 """
     )
-    monkeypatch.setattr(
-        sys, "argv", ["ralph", "--config", str(cfg), "-f"]
-    )
+    monkeypatch.setattr(sys, "argv", ["ralph", "--config", str(cfg), "-f"])
     monkeypatch.chdir(tmp_path)
 
     captured_systems = []
@@ -801,7 +791,12 @@ pipe:
 
     # First step: should have write instruction for handoff to step2, no read
     assert "handoff__step1__to__step2" in captured_systems[0]
-    assert "handoff__" not in captured_systems[0].split("handoff__step1__to__step2")[0].rsplit("task.md", 1)[0]
+    assert (
+        "handoff__"
+        not in captured_systems[0]
+        .split("handoff__step1__to__step2")[0]
+        .rsplit("task.md", 1)[0]
+    )
 
     # Last step: should have read instruction from step1, no write
     assert "handoff__step1__to__step2" in captured_systems[1]
@@ -824,9 +819,7 @@ pipe:
     system_prompt: "You are step2."
 """
     )
-    monkeypatch.setattr(
-        sys, "argv", ["ralph", "--config", str(cfg), "-f"]
-    )
+    monkeypatch.setattr(sys, "argv", ["ralph", "--config", str(cfg), "-f"])
     monkeypatch.chdir(tmp_path)
 
     captured_systems = []
@@ -860,9 +853,7 @@ pipe:
     handoff_prompt: ""
 """
     )
-    monkeypatch.setattr(
-        sys, "argv", ["ralph", "--config", str(cfg), "-f"]
-    )
+    monkeypatch.setattr(sys, "argv", ["ralph", "--config", str(cfg), "-f"])
     monkeypatch.chdir(tmp_path)
 
     captured_systems = []
@@ -922,7 +913,9 @@ def test_build_default_handoff_middle_step():
 
 
 def test_resolve_handoff_step_level_wins():
-    step = StepConfig(step_name="s", task_prompt="", system_prompt="", handoff_prompt="STEP")
+    step = StepConfig(
+        step_name="s", task_prompt="", system_prompt="", handoff_prompt="STEP"
+    )
     result = _resolve_handoff(step, "CONFIG", 1, 1, [step], "dir")
     assert result == "STEP"
 
