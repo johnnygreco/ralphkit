@@ -401,7 +401,9 @@ def main() -> None:
                 before_diff = git_diff_stat()
                 t0 = time.time()
                 model, claude_out = _run_step(step, loop_vars)
-                _record_step(step, model, claude_out, t0, "loop", before_diff, iteration=i)
+                _record_step(
+                    step, model, claude_out, t0, "loop", before_diff, iteration=i
+                )
                 print(f"  {GREEN}   Done. ({_fmt_elapsed(time.time() - t0)}){NC}")
 
                 _check_blocked()
