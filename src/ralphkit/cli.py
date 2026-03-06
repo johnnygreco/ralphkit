@@ -215,7 +215,9 @@ def main() -> None:
 
             for idx, step in enumerate(config.loop, 1):
                 step_model = resolve_model(step, config.default_model)
-                print(f"  {YELLOW}[{idx}/{total_loop_steps}] {step.step_name} ({step_model})...{NC}")
+                print(
+                    f"  {YELLOW}[{idx}/{total_loop_steps}] {step.step_name} ({step_model})...{NC}"
+                )
                 t0 = time.time()
                 _run_step(step, loop_vars)
                 print(f"  {GREEN}   Done. ({_fmt_elapsed(time.time() - t0)}){NC}")
@@ -238,7 +240,9 @@ def main() -> None:
                     print(f"     {line}")
                 print()
 
-            print(f"  Iteration {i} completed in {_fmt_elapsed(time.time() - iter_start)}")
+            print(
+                f"  Iteration {i} completed in {_fmt_elapsed(time.time() - iter_start)}"
+            )
 
             # ── Check review result ─────────────────────────────────
             result = state.read_review_result()
