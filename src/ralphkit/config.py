@@ -10,7 +10,7 @@ VERDICT_SHIP = "SHIP"
 VERDICT_REVISE = "REVISE"
 
 DEFAULT_MAX_ITERATIONS = 10
-DEFAULT_MODEL = "sonnet"
+DEFAULT_MODEL = "opus"
 
 DEFAULT_WORKER_TASK_PROMPT = (
     "Read {state_dir}/task.md and begin working. "
@@ -113,6 +113,7 @@ class StepConfig:
 class RalphConfig:
     max_iterations: int
     default_model: str
+    state_dir: str
     loop: list[StepConfig]
     setup: list[StepConfig] = field(default_factory=list)
     cleanup: list[StepConfig] = field(default_factory=list)
@@ -145,6 +146,7 @@ def load_config(path: str | Path | None = None) -> RalphConfig:
         return RalphConfig(
             max_iterations=DEFAULT_MAX_ITERATIONS,
             default_model=DEFAULT_MODEL,
+            state_dir=STATE_DIR,
             loop=_default_loop(),
         )
 
@@ -155,6 +157,7 @@ def load_config(path: str | Path | None = None) -> RalphConfig:
     valid_keys = {
         "max_iterations",
         "default_model",
+        "state_dir",
         "loop",
         "setup",
         "cleanup",
@@ -171,6 +174,7 @@ def load_config(path: str | Path | None = None) -> RalphConfig:
         raise ValueError(f"max_iterations must be >= 1, got {max_iterations}")
 
     default_model = data.get("default_model", DEFAULT_MODEL)
+    state_dir = data.get("state_dir", STATE_DIR)
 
     if "loop" in data:
         loop_steps = _parse_steps(data["loop"], "loop")
@@ -185,6 +189,7 @@ def load_config(path: str | Path | None = None) -> RalphConfig:
     return RalphConfig(
         max_iterations=max_iterations,
         default_model=default_model,
+        state_dir=state_dir,
         loop=loop_steps,
         setup=setup_steps,
         cleanup=cleanup_steps,
