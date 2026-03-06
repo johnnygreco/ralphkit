@@ -20,6 +20,9 @@ class StateDir:
         ]:
             (self.path / name).unlink(missing_ok=True)
 
+    def read_task(self) -> str | None:
+        return self._read("task.md")
+
     def write_task(self, content: str) -> None:
         (self.path / "task.md").write_text(content)
 

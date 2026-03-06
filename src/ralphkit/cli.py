@@ -1,5 +1,6 @@
 import argparse
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -115,9 +116,21 @@ def main() -> None:
 
     task_content = resolve_task(args.task)
 
+    start_time = time.time()
+
     state = StateDir(config.state_dir)
     state.setup()
     state.clean()
+
+    existing_task = state.read_task()
+    if existing_task and existing_task.strip() and existing_task != task_content:
+        print(
+            f"{RED}Error: {config.state_dir}/task.md already exists with different content. "
+            f"Remove it first or pass it as the task argument.{NC}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     state.write_task(task_content)
 
     # ── Banner ──────────────────────────────────────────────────────
@@ -169,16 +182,25 @@ def main() -> None:
         _run_phase(prompt, model, system)
         return model
 
+    def _fmt_elapsed(elapsed: float) -> str:
+        return f"{elapsed:.1f}s"
+
+    def _print_total_elapsed() -> None:
+        print(f"\n  Total elapsed: {_fmt_elapsed(time.time() - start_time)}")
+
     # ── SETUP phase ─────────────────────────────────────────────────
     if config.setup:
         print(f"{BLUE}── Setup ──{NC}")
-        for step in config.setup:
-            print(f"  {YELLOW}{step.step_name}...{NC}")
+        total_setup = len(config.setup)
+        for idx, step in enumerate(config.setup, 1):
+            print(f"  {YELLOW}[{idx}/{total_setup}] {step.step_name}...{NC}")
+            t0 = time.time()
             _run_step(step)
-            print(f"  {GREEN}   Done.{NC}")
+            print(f"  {GREEN}   Done. ({_fmt_elapsed(time.time() - t0)}){NC}")
         print()
 
     # ── LOOP phase (with cleanup in finally) ────────────────────────
+    total_loop_steps = len(config.loop)
     try:
         for i in range(1, config.max_iterations + 1):
             print(f"{BLUE}{'-' * 59}{NC}")
@@ -187,14 +209,16 @@ def main() -> None:
             print()
 
             state.write_iteration(i)
+            iter_start = time.time()
 
             loop_vars = {"iteration": str(i)}
 
-            for step in config.loop:
+            for idx, step in enumerate(config.loop, 1):
                 step_model = resolve_model(step, config.default_model)
-                print(f"  {YELLOW}{step.step_name} ({step_model})...{NC}")
+                print(f"  {YELLOW}[{idx}/{total_loop_steps}] {step.step_name} ({step_model})...{NC}")
+                t0 = time.time()
                 _run_step(step, loop_vars)
-                print(f"  {GREEN}   Done.{NC}")
+                print(f"  {GREEN}   Done. ({_fmt_elapsed(time.time() - t0)}){NC}")
 
                 # Check for blocked state after each step
                 blocked = state.is_blocked()
@@ -202,6 +226,7 @@ def main() -> None:
                     print()
                     print(f"{RED}Blocked:{NC}")
                     print(blocked)
+                    _print_total_elapsed()
                     sys.exit(1)
 
             # Show work summary if present
@@ -213,17 +238,20 @@ def main() -> None:
                     print(f"     {line}")
                 print()
 
+            print(f"  Iteration {i} completed in {_fmt_elapsed(time.time() - iter_start)}")
+
             # ── Check review result ─────────────────────────────────
             result = state.read_review_result()
             if result is None:
                 print(f"{RED}Review failed: no review-result.md produced.{NC}")
+                _print_total_elapsed()
                 sys.exit(1)
 
             if result == VERDICT_SHIP:
                 print(f"{GREEN}{'=' * 59}{NC}")
                 print(f"{GREEN}  SHIP — Task completed in {i} iteration(s)!{NC}")
                 print(f"{GREEN}{'=' * 59}{NC}")
-                print()
+                _print_total_elapsed()
                 sys.exit(0)
             elif result == VERDICT_REVISE:
                 print(f"  {YELLOW}REVISE — Reviewer wants changes.{NC}")
@@ -237,6 +265,7 @@ def main() -> None:
                 state.clean_for_next_iteration()
             else:
                 print(f"{RED}Unexpected review result: '{result}'{NC}")
+                _print_total_elapsed()
                 sys.exit(1)
 
         # ── Max iterations reached ──────────────────────────────────
@@ -246,15 +275,17 @@ def main() -> None:
             f"{RED}  Max iterations ({config.max_iterations}) reached without SHIP.{NC}"
         )
         print(f"{RED}{'=' * 59}{NC}")
-        print()
+        _print_total_elapsed()
         sys.exit(1)
     finally:
         # ── CLEANUP phase (always runs) ─────────────────────────────
         if config.cleanup:
             print()
             print(f"{BLUE}── Cleanup ──{NC}")
-            for step in config.cleanup:
-                print(f"  {YELLOW}{step.step_name}...{NC}")
+            total_cleanup = len(config.cleanup)
+            for idx, step in enumerate(config.cleanup, 1):
+                print(f"  {YELLOW}[{idx}/{total_cleanup}] {step.step_name}...{NC}")
+                t0 = time.time()
                 _run_step(step)
-                print(f"  {GREEN}   Done.{NC}")
+                print(f"  {GREEN}   Done. ({_fmt_elapsed(time.time() - t0)}){NC}")
             print()
