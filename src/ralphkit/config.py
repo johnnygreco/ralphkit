@@ -10,7 +10,7 @@ VERDICT_SHIP = "SHIP"
 VERDICT_REVISE = "REVISE"
 
 DEFAULT_MAX_ITERATIONS = 10
-DEFAULT_MODEL = "sonnet"
+DEFAULT_MODEL = "opus"
 
 DEFAULT_WORKER_TASK_PROMPT = (
     "Read {state_dir}/task.md and begin working. "

@@ -78,7 +78,7 @@ The config file is optional. Without one, ralphkit uses a built-in default loop 
 ```yaml
 # All top-level keys are optional
 max_iterations: 10      # default: 10
-default_model: sonnet   # default: sonnet
+default_model: opus     # default: opus
 state_dir: .ralphkit    # default: .ralphkit
 
 # Optional: runs once before the loop
