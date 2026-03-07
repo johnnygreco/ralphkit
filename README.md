@@ -11,7 +11,7 @@ Run `ralph` with two modes:
 - **Loop** — iterative work/review cycle. Steps repeat until the reviewer says SHIP or max iterations are reached.
 - **Pipe** — linear sequence. Each step runs once, passing context forward via handoff files.
 
-The mode is auto-detected from your config. No subcommands needed.
+The mode is auto-detected from your config. Just `ralph "your task"` to get started.
 
 Inspired by the [ralph loop](https://ghuntley.com/loop/).
 
@@ -57,19 +57,22 @@ ralph "refactor auth module" --config configs/example-pipe.yaml
 
 ## Usage
 
+### Foreground (default)
+
 ```
-ralph [TASK] [OPTIONS]
+ralph [run] TASK [OPTIONS]
 ```
 
-| Argument | Description | Default |
-|----------|-------------|---------|
+The `run` subcommand is implicit — `ralph "your task"` is equivalent to `ralph run "your task"`.
+
+| Option | Description | Default |
+|--------|-------------|---------|
 | `TASK` | Task description (string or path to `.md` file) | required for loop, optional for pipe |
-| `--config PATH` | Path to YAML config file | built-in loop defaults |
+| `--config PATH` / `-c` | Path to YAML config file | built-in loop defaults |
 | `--max-iterations N` | Override max iterations (loop only) | 10 |
 | `--default-model MODEL` | Override default model | opus |
 | `--state-dir DIR` | Override state directory | .ralphkit |
 | `-f` / `--force` | Skip confirmation prompt | off |
-| `--list-runs` | List previous runs and exit | — |
 
 ```bash
 # No config — uses built-in worker/reviewer loop
@@ -86,6 +89,32 @@ ralph --config pipe.yaml -f
 
 # Pipe with a task
 ralph "analyze auth" --config pipe.yaml
+```
+
+### Background Jobs
+
+```
+ralph submit TASK [OPTIONS]
+```
+
+Submit a task to run in a detached tmux session (locally or on a remote host).
+
+| Option | Description |
+|--------|-------------|
+| `--host NAME` / `-H` | Run on a remote host (from hosts config) |
+| `--working-dir PATH` | Working directory for the job |
+| `--attach` | Attach to the tmux session after submitting |
+| All `run` options | `--config`, `--max-iterations`, `--default-model`, `--state-dir` |
+
+### Job Management
+
+```bash
+ralph jobs [--host NAME]            # List active jobs
+ralph logs JOB_ID [--host NAME]     # View job logs (-F to follow)
+ralph cancel JOB_ID [--host NAME]   # Cancel a running job
+ralph attach JOB_ID [--host NAME]   # Attach to a job's tmux session
+ralph runs                          # List past completed runs
+ralph hosts                         # List configured remote hosts
 ```
 
 ## Config
@@ -230,6 +259,59 @@ Each step runs once. Context flows forward through named handoff files:
 
 By default, each step gets position-aware handoff instructions appended to its system prompt. The first step is told to write a handoff file, middle steps read the previous handoff and write the next, and the last step only reads. Override with `handoff_prompt:` at the step or config level, or set it to an empty string to disable handoff injection.
 
+## Remote Execution
+
+Submit jobs to remote machines via SSH + tmux. Useful for offloading long-running tasks to a more remote machine (e.g., a Mac Mini).
+
+### Setup
+
+1. Ensure the remote host has `tmux` and `ralph` (ralphkit) installed.
+2. Set up SSH access to the remote host (key-based auth recommended). Configure connection details in `~/.ssh/config` as usual:
+   ```
+   Host mini
+     HostName my-mac-mini.local
+     User donnie
+   ```
+3. Create `~/.config/ralphkit/hosts.yaml`:
+
+```yaml
+default: mini  # optional, shown in `ralph hosts` output
+
+hosts:
+  mini:
+    hostname: mini                          # SSH host (matches ~/.ssh/config)
+    working_dir: /Users/donnie/project      # optional
+    ralph_command: ralph                    # optional, defaults to "ralph"
+    env:                                    # optional environment variables
+      CLAUDE_MODEL: opus
+```
+
+The `hostname` field is passed directly to `ssh`, so it can be an SSH config alias, a hostname, or an IP address. All SSH config options (user, port, identity file, proxy, etc.) are handled by your SSH config.
+
+### Submitting Remote Jobs
+
+```bash
+# Submit to a configured host
+ralph submit "Add unit tests for auth" --host mini
+
+# Override working directory
+ralph submit "Fix the build" --host mini --working-dir /path/to/project
+
+# Submit and immediately attach
+ralph submit "Refactor database layer" --host mini --attach
+
+# Check status
+ralph jobs --host mini
+
+# Stream logs
+ralph logs rk-add-unit-tests-0307-1430-a1b2 --host mini -F
+
+# Attach to the tmux session
+ralph attach rk-add-unit-tests-0307-1430-a1b2 --host mini
+```
+
+Remote jobs persist in tmux sessions on the remote host. If your SSH connection drops, the job continues running — reconnect with `ralph attach`.
+
 ## Run Reports
 
 After each run, ralphkit prints a summary and saves `report.json` to the run directory. The report includes:
@@ -241,8 +323,8 @@ After each run, ralphkit prints a summary and saves `report.json` to the run dir
 - Turn count per step
 
 ```bash
-ralph --list-runs          # list previous runs
-cat .ralphkit/runs/001/report.json  # inspect a specific report
+ralph runs                         # list previous runs
+cat .ralphkit/runs/001/report.json # inspect a specific report
 ```
 
 ## State Files
@@ -259,7 +341,7 @@ Each run gets its own numbered directory under `.ralphkit/runs/`. A `current` sy
     003/                     # active run
 ```
 
-Previous runs are preserved automatically. Use `--list-runs` to see them.
+Previous runs are preserved automatically. Use `ralph runs` to see them.
 
 Loop state files:
 
@@ -287,3 +369,5 @@ Pipe state files:
 
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`claude` must be on your PATH)
 - Python 3.10+
+- [tmux](https://github.com/tmux/tmux) (required for `submit` — both locally and on remote hosts)
+- SSH access to remote hosts (for remote execution only)
