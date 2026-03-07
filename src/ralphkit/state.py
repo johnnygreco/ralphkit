@@ -1,4 +1,6 @@
+import json
 import os
+import shutil
 from pathlib import Path
 
 from ralphkit.config import STATE_DIR
@@ -69,16 +71,6 @@ class StateDir:
         self.path = self._create_new_run()
         self._update_current_link()
 
-    def clean(self) -> None:
-        for name in [
-            "review-result.md",
-            "review-feedback.md",
-            "work-summary.md",
-            "work-complete.md",
-            "RALPH-BLOCKED.md",
-        ]:
-            (self.path / name).unlink(missing_ok=True)
-
     def read_task(self) -> str | None:
         return self._read("task.md")
 
@@ -88,25 +80,35 @@ class StateDir:
     def write_iteration(self, n: int) -> None:
         (self.path / "iteration.md").write_text(str(n))
 
-    def _read(self, name: str, strip: bool = False) -> str | None:
+    def _read(self, name: str) -> str | None:
         try:
-            content = (self.path / name).read_text()
-            return content.strip() if strip else content
+            return (self.path / name).read_text()
         except FileNotFoundError:
             return None
-
-    def read_review_result(self) -> str | None:
-        return self._read("review-result.md", strip=True)
-
-    def read_work_summary(self) -> str | None:
-        return self._read("work-summary.md")
-
-    def read_review_feedback(self) -> str | None:
-        return self._read("review-feedback.md")
 
     def is_blocked(self) -> str | None:
         return self._read("RALPH-BLOCKED.md")
 
     def clean_for_next_iteration(self) -> None:
-        for name in ["work-complete.md", "review-result.md", "work-summary.md"]:
+        for name in ["RALPH-BLOCKED.md"]:
             (self.path / name).unlink(missing_ok=True)
+
+    # ── Plan management ───────────────────────────────────────────
+
+    def read_plan(self) -> dict | None:
+        """Read and parse plan.json. Returns None if missing or invalid JSON."""
+        raw = self._read("plan.json")
+        if raw is None:
+            return None
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    def write_plan(self, data: dict) -> None:
+        """Write dict as JSON to plan.json."""
+        (self.path / "plan.json").write_text(json.dumps(data, indent=2) + "\n")
+
+    def copy_plan(self, source: Path) -> None:
+        """Copy an external file into the state dir as plan.json."""
+        shutil.copy2(source, self.path / "plan.json")

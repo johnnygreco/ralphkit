@@ -55,11 +55,6 @@ def print_kv(key: str, value: str) -> None:
     console.print(f"  [label]{key + ':':<10}[/] {value}")
 
 
-def print_indented_block(header: str, body: str) -> None:
-    indented = "\n".join(f"       {line}" for line in body.splitlines())
-    console.print(f"\n     [label]{header}:[/]\n{indented}\n")
-
-
 def fmt_duration(seconds: float) -> str:
     if seconds >= 60:
         m = int(seconds) // 60
@@ -74,6 +69,43 @@ def print_error(msg: str) -> None:
 
 def print_warning(msg: str) -> None:
     console.print(f"[warning]{msg}[/]")
+
+
+def print_plan_summary(plan: dict) -> None:
+    """Print a Rich table summarizing plan items."""
+    items = plan.get("items", [])
+    table = Table(
+        box=box.SIMPLE_HEAVY,
+        show_edge=False,
+        padding=(0, 1),
+    )
+    table.add_column("#", justify="right", style="bold")
+    table.add_column("Item")
+    table.add_column("Done", justify="center")
+    for item in items:
+        done_icon = "\u2611" if item.get("done", False) else "\u2610"
+        table.add_row(
+            str(item.get("id", "")),
+            item.get("title", ""),
+            done_icon,
+        )
+    console.print(table)
+
+
+def print_plan_progress(done: int, total: int) -> None:
+    """Print progress bar for plan items."""
+    if total == 0:
+        return
+    filled = int(10 * done / total)
+    bar = "\u2588" * filled + "\u2591" * (10 - filled)
+    console.print(f"  [label]Progress:[/] {done}/{total} items done  {bar}")
+
+
+def print_current_item(item: dict) -> None:
+    """Print the current plan item being worked on."""
+    item_id = item.get("id", "?")
+    title = item.get("title", "")
+    console.print(f"  [label]Item:[/] #{item_id} \u2014 {title}")
 
 
 def print_jobs_table(jobs: list[dict], host_label: str) -> None:

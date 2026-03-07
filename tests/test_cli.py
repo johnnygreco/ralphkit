@@ -126,6 +126,33 @@ def test_run_no_task_for_pipe_mode(mock_fg):
     assert mock_fg.call_args.kwargs["task"] is None
 
 
+@patch("ralphkit.engine.run_foreground")
+def test_run_plan_flags_forwarded(mock_fg, tmp_path):
+    """--plan, --plan-only, --plan-model are forwarded."""
+    plan_file = tmp_path / "plan.json"
+    plan_file.write_text('{"items": []}')
+    mock_fg.side_effect = SystemExit(0)
+
+    runner.invoke(
+        app,
+        [
+            "run",
+            "my task",
+            "--plan",
+            str(plan_file),
+            "--plan-only",
+            "--plan-model",
+            "sonnet",
+            "-f",
+        ],
+    )
+    mock_fg.assert_called_once()
+    kwargs = mock_fg.call_args.kwargs
+    assert kwargs["plan_path"] == str(plan_file)
+    assert kwargs["plan_only"] is True
+    assert kwargs["plan_model"] == "sonnet"
+
+
 # -- submit command --
 
 

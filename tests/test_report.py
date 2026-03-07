@@ -134,7 +134,7 @@ def test_total_turns():
 
 def test_to_dict_complete():
     report = RunReport()
-    report.outcome = "SHIP"
+    report.outcome = "COMPLETE"
     report.iterations_completed = 2
     report.total_duration_s = 120.0
     report.record_step(
@@ -148,7 +148,7 @@ def test_to_dict_complete():
         lines_deleted=2,
     )
     d = report.to_dict()
-    assert d["outcome"] == "SHIP"
+    assert d["outcome"] == "COMPLETE"
     assert d["iterations_completed"] == 2
     assert d["total_duration_s"] == 120.0
     assert d["total_turns"] == 5
@@ -162,14 +162,14 @@ def test_to_dict_complete():
 
 def test_save_writes_json(tmp_path):
     report = RunReport()
-    report.outcome = "SHIP"
+    report.outcome = "COMPLETE"
     report.total_duration_s = 10.0
     report.record_step(step_name="w", model="opus", phase="loop", duration_s=5.0)
     out = tmp_path / "report.json"
     report.save(out)
 
     data = json.loads(out.read_text())
-    assert data["outcome"] == "SHIP"
+    assert data["outcome"] == "COMPLETE"
     assert len(data["steps"]) == 1
 
 
@@ -195,7 +195,7 @@ def test_parse_shortstat_empty():
 def test_print_report_no_crash(capsys):
     # Empty report
     report = RunReport()
-    report.outcome = "SHIP"
+    report.outcome = "COMPLETE"
     print_report(report)
     out = capsys.readouterr().out
     assert "RUN REPORT" in out
@@ -217,4 +217,4 @@ def test_print_report_no_crash(capsys):
     print_report(report)
     out = capsys.readouterr().out
     assert "RUN REPORT" in out
-    assert "SHIP" in out
+    assert "COMPLETE" in out

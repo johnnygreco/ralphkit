@@ -87,6 +87,18 @@ def run(
     force: Annotated[
         bool, typer.Option("-f", "--force", help="Skip confirmation")
     ] = False,
+    plan: Annotated[
+        Optional[Path],
+        typer.Option("--plan", help="Path to pre-made plan.json (skips planning step)"),
+    ] = None,
+    plan_only: Annotated[
+        bool,
+        typer.Option("--plan-only", help="Generate plan and exit"),
+    ] = False,
+    plan_model: Annotated[
+        Optional[str],
+        typer.Option("--plan-model", help="Override model for planning step"),
+    ] = None,
 ) -> None:
     """Run a task locally in the foreground."""
     from ralphkit.engine import run_foreground
@@ -98,6 +110,9 @@ def run(
         default_model=default_model,
         state_dir=state_dir,
         force=force,
+        plan_path=str(plan) if plan else None,
+        plan_only=plan_only,
+        plan_model=plan_model,
     )
 
 
@@ -107,6 +122,8 @@ def run(
 @app.command()
 def runs(state_dir: StateDirOpt = None) -> None:
     """List past completed runs."""
+    import json
+
     from ralphkit.state import StateDir
 
     sd = StateDir(state_dir or ".ralphkit")
@@ -119,7 +136,27 @@ def runs(state_dir: StateDirOpt = None) -> None:
             first_line = ""
             if task_file.is_file():
                 first_line = task_file.read_text().split("\n", 1)[0]
-            console.print(f"  [label]#{run_dir.name}[/]  {first_line}")
+
+            plan_info = ""
+            plan_path = run_dir / "plan.json"
+            if plan_path.is_file():
+                try:
+                    plan_data = json.loads(plan_path.read_text())
+                    plan_items = plan_data.get("items", [])
+                    done = sum(1 for it in plan_items if it.get("done", False))
+                    total = len(plan_items)
+                    outcome = ""
+                    report_path = run_dir / "report.json"
+                    if report_path.is_file():
+                        report_data = json.loads(report_path.read_text())
+                        outcome = report_data.get("outcome", "")
+                    if outcome:
+                        plan_info = f"  [dim][{outcome} {done}/{total}][/]"
+                    else:
+                        plan_info = f"  [dim][{done}/{total}][/]"
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            console.print(f"  [label]#{run_dir.name}[/]  {first_line}{plan_info}")
 
 
 # -- submit command --
