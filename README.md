@@ -4,11 +4,11 @@
 
 # ralphkit
 
-Agent pipes and loops for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). 
+Agent pipes and loops for [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
 Run `ralph` with two modes:
 
-- **Loop** — iterative work/review cycle. Steps repeat until the reviewer says SHIP or max iterations are reached.
+- **Loop** — plan-driven iteration. Creates a structured plan, then iterates one item at a time until all are complete.
 - **Pipe** — linear sequence. Each step runs once, passing context forward via handoff files.
 
 The mode is auto-detected from your config. No subcommands needed.
@@ -30,7 +30,7 @@ uv tool install ralphkit
 Or run directly without installing:
 
 ```bash
-uvx ralphkit ralph "your task here" --config ralph.yaml
+uvx --from ralphkit ralph "your task here" --config ralph.yaml
 ```
 
 ## Quick Start
@@ -40,6 +40,12 @@ uvx ralphkit ralph "your task here" --config ralph.yaml
 ```bash
 # Run with built-in defaults (no config needed)
 ralph "Add unit tests for the auth module"
+
+# Generate plan only — review/edit before committing to a full run
+ralph "Add unit tests for the auth module" --plan-only
+
+# Skip planning — provide your own plan.json
+ralph "Add unit tests for the auth module" --plan my-plan.json
 
 # With a custom config
 ralph "Refactor the database layer" --config configs/example.yaml
@@ -67,16 +73,27 @@ ralph [TASK] [OPTIONS]
 | `--config PATH` | Path to YAML config file | built-in loop defaults |
 | `--max-iterations N` | Override max iterations (loop only) | 10 |
 | `--default-model MODEL` | Override default model | opus |
+| `--plan PATH` | Path to pre-made plan.json (skips planning step) | — |
+| `--plan-only` | Generate plan and exit without running the loop | off |
+| `--plan-model MODEL` | Override model for the planning step | default model |
 | `--state-dir DIR` | Override state directory | .ralphkit |
 | `-f` / `--force` | Skip confirmation prompt | off |
 | `--list-runs` | List previous runs and exit | — |
 
 ```bash
-# No config — uses built-in worker/reviewer loop
+# No config — uses built-in plan-driven loop
 ralph "Add unit tests for the auth module"
 
 # Task from a markdown file
 ralph task.md --config ralph.yaml
+
+# Generate plan only, review it, then run
+ralph "Add auth" --plan-only -f
+# ... edit .ralphkit/runs/001/plan.json ...
+ralph "Add auth" --plan .ralphkit/runs/001/plan.json -f
+
+# Use a cheaper model for planning
+ralph "Add auth" --plan-model sonnet
 
 # Override max iterations and skip confirmation
 ralph "Fix the flaky CI tests" --max-iterations 5 -f
@@ -86,11 +103,14 @@ ralph --config pipe.yaml -f
 
 # Pipe with a task
 ralph "analyze auth" --config pipe.yaml
+
+# Combinations
+ralph task.md --plan-model sonnet --max-iterations 8 --default-model sonnet -f
 ```
 
 ## Config
 
-The config file is optional. Without one, ralphkit uses a built-in loop with a worker and reviewer step. The mode is determined by your config: include a `pipe:` section for pipe mode, otherwise it runs as a loop.
+The config file is optional. Without one, ralphkit uses a built-in loop with a single worker step driven by a plan. The mode is determined by your config: include a `pipe:` section for pipe mode, otherwise it runs as a loop.
 
 ### Loop config
 
@@ -98,22 +118,22 @@ The config file is optional. Without one, ralphkit uses a built-in loop with a w
 # All top-level keys are optional
 max_iterations: 10    # default: 10
 default_model: opus   # default: opus
+plan_model: sonnet    # optional: cheaper model for planning step
 
-# Runs once before the loop starts
+# Overrides the built-in worker loop
+loop:
+  - step_name: worker
+    task_prompt: "Read {state_dir}/plan.json, find the next incomplete item, and implement it."
+    system_prompt: |
+      You are a WORKER in a RALPH LOOP...
+      (see configs/example.yaml for the full prompt)
+    model: sonnet  # optional per-step model override
+
+# Runs once before planning starts
 setup:
   - step_name: init
     task_prompt: "Initialize the project."
     system_prompt: "Set up the project scaffolding."
-
-# Overrides the built-in worker/reviewer loop
-loop:
-  - step_name: worker
-    task_prompt: "Read {state_dir}/task.md and begin working. This is iteration {iteration} of {max_iterations}."
-    system_prompt: "Work on the task incrementally..."
-  - step_name: reviewer
-    task_prompt: "Review the work done for the task in {state_dir}/task.md."
-    system_prompt: "Review the code changes and write your verdict..."
-    model: sonnet  # optional per-step model override
 
 # Runs once after the loop exits (always, even on failure)
 cleanup:
@@ -197,17 +217,17 @@ See [`configs/example.yaml`](configs/example.yaml) and [`configs/example-pipe.ya
 ### Loop
 
 ```
-Setup (once)         Loop (iterate)           Cleanup (once)
-┌──────────┐    ┌───────────────────────┐    ┌──────────────┐
-│ step 1   │    │ step 1 (e.g. worker)  │    │ step 1       │
-│ step 2   │    │ step 2 (e.g. reviewer)│    │ ...          │
-│ ...      │    │ ...                   │    └──────────────┘
-└──────────┘    │ SHIP? → done          │
-                │ REVISE? → loop again  │
-                └───────────────────────┘
+Setup (once)         Planning          Loop (iterate)           Cleanup (once)
+┌──────────┐    ┌──────────────┐    ┌───────────────────────┐    ┌──────────────┐
+│ step 1   │    │ planner      │    │ Read plan.json        │    │ step 1       │
+│ step 2   │    │ → plan.json  │    │ Work on next item     │    │ ...          │
+│ ...      │    └──────────────┘    │ Update plan.json      │    └──────────────┘
+└──────────┘                        │ All done? → COMPLETE  │
+                                    │ More items? → loop    │
+                                    └───────────────────────┘
 ```
 
-Each iteration runs all loop steps in order, then checks `.ralphkit/current/review-result.md` for a verdict. On SHIP, the run exits successfully. On REVISE, feedback is preserved and the loop continues. The cleanup phase runs after the loop exits regardless of outcome, like a `finally` block.
+The planner agent reads the task and breaks it into discrete items in `plan.json`. Each loop iteration works on exactly one item, marks it done, and appends learnings to `progress.md`. The loop completes when all items are done. The cleanup phase runs after the loop exits regardless of outcome, like a `finally` block.
 
 ### Pipe
 
@@ -234,14 +254,15 @@ By default, each step gets position-aware handoff instructions appended to its s
 
 After each run, ralphkit prints a summary and saves `report.json` to the run directory. The report includes:
 
-- Outcome (SHIP, REVISE, MAX_ITERATIONS, PIPE_COMPLETE, ERROR, BLOCKED)
+- Outcome (COMPLETE, MAX_ITERATIONS, PIPE_COMPLETE, ERROR, BLOCKED)
+- Plan completion stats (items completed / total)
 - Wall-clock and API duration per step
 - Token usage broken down by model
 - Lines added/deleted (from `git diff`)
 - Turn count per step
 
 ```bash
-ralph --list-runs          # list previous runs
+ralph --list-runs          # list previous runs with plan progress
 cat .ralphkit/runs/001/report.json  # inspect a specific report
 ```
 
@@ -254,7 +275,7 @@ Each run gets its own numbered directory under `.ralphkit/runs/`. A `current` sy
   current -> runs/003        # symlink to active run
   runs/
     001/                     # first run (preserved)
-      task.md, iteration.md, work-summary.md, report.json, ...
+      task.md, plan.json, progress.md, report.json, ...
     002/                     # second run (preserved)
     003/                     # active run
 ```
@@ -266,11 +287,9 @@ Loop state files:
 | File | Purpose |
 |------|---------|
 | `task.md` | The task description |
+| `plan.json` | Structured plan: goal + items with done status |
+| `progress.md` | Append-only log of iteration learnings |
 | `iteration.md` | Current iteration number |
-| `work-summary.md` | What the worker did this iteration |
-| `work-complete.md` | Created when the worker thinks it's done |
-| `review-result.md` | SHIP or REVISE |
-| `review-feedback.md` | Feedback from the reviewer |
 | `RALPH-BLOCKED.md` | Created if a step cannot proceed |
 | `report.json` | Run report with timing and token usage |
 

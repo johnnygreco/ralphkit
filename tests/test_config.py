@@ -87,9 +87,8 @@ setup:
 """
     )
     config = load_config(cfg_file)
-    assert len(config.loop) == 2
+    assert len(config.loop) == 1
     assert config.loop[0].step_name == "worker"
-    assert config.loop[1].step_name == "reviewer"
     assert config.max_iterations == DEFAULT_MAX_ITERATIONS
     assert config.default_model == DEFAULT_MODEL
     assert len(config.setup) == 1
@@ -161,9 +160,8 @@ def test_load_config_none_returns_defaults():
     config = load_config(None)
     assert config.max_iterations == DEFAULT_MAX_ITERATIONS
     assert config.default_model == DEFAULT_MODEL
-    assert len(config.loop) == 2
+    assert len(config.loop) == 1
     assert config.loop[0].step_name == "worker"
-    assert config.loop[1].step_name == "reviewer"
     assert config.setup == []
     assert config.cleanup == []
 
@@ -171,7 +169,7 @@ def test_load_config_none_returns_defaults():
 def test_load_config_no_args_returns_defaults():
     config = load_config()
     assert config.max_iterations == DEFAULT_MAX_ITERATIONS
-    assert len(config.loop) == 2
+    assert len(config.loop) == 1
 
 
 def test_resolve_model_fallback():
@@ -218,7 +216,7 @@ def test_load_config_empty_yaml(tmp_path):
     config = load_config(cfg_file)
     assert config.max_iterations == DEFAULT_MAX_ITERATIONS
     assert config.default_model == DEFAULT_MODEL
-    assert len(config.loop) == 2
+    assert len(config.loop) == 1
 
 
 def test_load_config_step_missing_step_name(tmp_path):
@@ -313,7 +311,7 @@ pipe:
     assert config.pipe[0].step_name == "analyze"
     assert config.pipe[1].step_name == "report"
     # loop gets defaults when pipe is present
-    assert len(config.loop) == 2
+    assert len(config.loop) == 1
     assert config.setup == []
     assert config.cleanup == []
 
@@ -417,3 +415,42 @@ def test_load_config_defaults_pipe_empty():
     config = load_config(None)
     assert config.pipe == []
     assert config.handoff_prompt is None
+
+
+# ── Plan model config tests ──────────────────────────────────────
+
+
+def test_load_config_plan_model(tmp_path):
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+plan_model: sonnet
+loop:
+  - step_name: worker
+    task_prompt: "Work."
+    system_prompt: "System."
+"""
+    )
+    config = load_config(cfg_file)
+    assert config.plan_model == "sonnet"
+
+
+def test_load_config_plan_model_default_none():
+    config = load_config(None)
+    assert config.plan_model is None
+
+
+def test_load_config_plan_model_not_unknown_key(tmp_path, capsys):
+    """plan_model should NOT trigger unknown keys warning."""
+    cfg_file = tmp_path / "ralph.yaml"
+    cfg_file.write_text(
+        """\
+plan_model: sonnet
+loop:
+  - step_name: worker
+    task_prompt: "Work."
+    system_prompt: "System."
+"""
+    )
+    load_config(cfg_file)
+    assert "unknown config keys" not in capsys.readouterr().err

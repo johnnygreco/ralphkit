@@ -12,25 +12,54 @@ from ralphkit.cli import (
     _resolve_handoff,
     _run_phase,
     _step_names,
+    _validate_plan,
 )
-from ralphkit.config import STATE_DIR, VERDICT_REVISE, VERDICT_SHIP, StepConfig
+from ralphkit.config import STATE_DIR, StepConfig
 
 
 # ── Helper ──────────────────────────────────────────────────────────
 
 
-def _minimal_config_with_two_loop_steps():
+def _minimal_config_yaml():
     return """\
-max_iterations: 1
+max_iterations: 3
 default_model: opus
 loop:
   - step_name: worker
     task_prompt: "Work."
     system_prompt: "System."
-  - step_name: reviewer
-    task_prompt: "Review."
-    system_prompt: "System."
 """
+
+
+def _make_plan(items=None, goal="Test"):
+    """Create a valid plan dict."""
+    if items is None:
+        items = [
+            {"id": 1, "title": "Item 1", "details": "Do thing 1", "done": False},
+            {"id": 2, "title": "Item 2", "details": "Do thing 2", "done": False},
+        ]
+    return {"goal": goal, "items": items}
+
+
+# ── _validate_plan ──────────────────────────────────────────────────
+
+
+def test_validate_plan_valid():
+    plan = _make_plan()
+    assert _validate_plan(plan) is None
+
+
+def test_validate_plan_none():
+    assert _validate_plan(None) is not None
+
+
+def test_validate_plan_empty_items():
+    assert _validate_plan({"items": []}) is not None
+
+
+def test_validate_plan_missing_fields():
+    plan = {"items": [{"id": 1, "title": "A"}]}  # missing 'done'
+    assert _validate_plan(plan) is not None
 
 
 # ── _render_prompt ───────────────────────────────────────────────────
@@ -125,17 +154,6 @@ def test_run_phase_non_runtime_error_propagates(mock_run):
 # ── main() ───────────────────────────────────────────────────────────
 
 
-def _minimal_config_yaml():
-    return """\
-max_iterations: 3
-default_model: opus
-loop:
-  - step_name: worker
-    task_prompt: "Work."
-    system_prompt: "System."
-"""
-
-
 @patch("ralphkit.cli.run_claude")
 def test_main_missing_task_arg(mock_run, monkeypatch, tmp_path):
     cfg = tmp_path / "ralph.yaml"
@@ -174,37 +192,8 @@ def test_main_max_iterations_invalid_exits(mock_run, monkeypatch, tmp_path, valu
 
 
 @patch("ralphkit.cli.run_claude")
-def test_main_ship_on_first_iteration(mock_run, monkeypatch, tmp_path):
-    """Full integration: loop runs once, reviewer SHIPs, exits 0."""
-    cfg = tmp_path / "ralph.yaml"
-    cfg.write_text(_minimal_config_yaml())
-    monkeypatch.setattr(
-        sys, "argv", ["ralph-loop", "do stuff", "--config", str(cfg), "-f"]
-    )
-    monkeypatch.chdir(tmp_path)
-
-    state_dir = tmp_path / STATE_DIR / "current"
-
-    def fake_claude(prompt, model, system_prompt):
-        (state_dir / "review-result.md").write_text(VERDICT_SHIP)
-
-    mock_run.side_effect = fake_claude
-
-    with pytest.raises(SystemExit) as exc_info:
-        main()
-    assert exc_info.value.code == 0
-
-    # report.json should be written
-    report_path = tmp_path / STATE_DIR / "runs" / "001" / "report.json"
-    assert report_path.exists()
-    data = json.loads(report_path.read_text())
-    assert data["outcome"] == "SHIP"
-    assert isinstance(data["steps"], list)
-
-
-@patch("ralphkit.cli.run_claude")
-def test_main_revise_then_ship(mock_run, monkeypatch, tmp_path):
-    """Loop runs twice: first REVISE, then SHIP."""
+def test_main_plan_then_complete(mock_run, monkeypatch, tmp_path):
+    """Planner writes 2-item plan, worker marks items done -> COMPLETE."""
     cfg = tmp_path / "ralph.yaml"
     cfg.write_text(_minimal_config_yaml())
     monkeypatch.setattr(
@@ -214,30 +203,79 @@ def test_main_revise_then_ship(mock_run, monkeypatch, tmp_path):
 
     state_dir = tmp_path / STATE_DIR / "current"
     call_count = {"n": 0}
+    plan = _make_plan()
 
     def fake_claude(prompt, model, system_prompt):
         call_count["n"] += 1
         if call_count["n"] == 1:
-            (state_dir / "review-result.md").write_text(VERDICT_REVISE)
-            (state_dir / "review-feedback.md").write_text("fix it")
-        else:
-            (state_dir / "review-result.md").write_text(VERDICT_SHIP)
+            # Planner writes plan.json
+            (state_dir / "plan.json").write_text(json.dumps(plan))
+        elif call_count["n"] == 2:
+            # Worker marks item 1 done
+            p = json.loads((state_dir / "plan.json").read_text())
+            p["items"][0]["done"] = True
+            (state_dir / "plan.json").write_text(json.dumps(p))
+        elif call_count["n"] == 3:
+            # Worker marks item 2 done
+            p = json.loads((state_dir / "plan.json").read_text())
+            p["items"][1]["done"] = True
+            (state_dir / "plan.json").write_text(json.dumps(p))
 
     mock_run.side_effect = fake_claude
 
     with pytest.raises(SystemExit) as exc_info:
         main()
     assert exc_info.value.code == 0
-    assert call_count["n"] == 2
+    assert call_count["n"] == 3  # planner + 2 worker iterations
+
+    # report.json should have COMPLETE outcome
+    report_path = tmp_path / STATE_DIR / "runs" / "001" / "report.json"
+    assert report_path.exists()
+    data = json.loads(report_path.read_text())
+    assert data["outcome"] == "COMPLETE"
 
 
 @patch("ralphkit.cli.run_claude")
-def test_main_max_iterations_reached(mock_run, monkeypatch, tmp_path):
-    """Loop exhausts max iterations without SHIP."""
+def test_main_plan_complete_single_iteration(mock_run, monkeypatch, tmp_path):
+    """1-item plan, worker marks done -> COMPLETE in 1 iteration."""
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text(_minimal_config_yaml())
+    monkeypatch.setattr(
+        sys, "argv", ["ralph-loop", "do stuff", "--config", str(cfg), "-f"]
+    )
+    monkeypatch.chdir(tmp_path)
+
+    state_dir = tmp_path / STATE_DIR / "current"
+    plan = _make_plan(
+        items=[{"id": 1, "title": "Only item", "details": "Do it", "done": False}]
+    )
+
+    call_count = {"n": 0}
+
+    def fake_claude(prompt, model, system_prompt):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            (state_dir / "plan.json").write_text(json.dumps(plan))
+        else:
+            p = json.loads((state_dir / "plan.json").read_text())
+            p["items"][0]["done"] = True
+            (state_dir / "plan.json").write_text(json.dumps(p))
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+    assert call_count["n"] == 2  # planner + 1 worker
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_plan_max_iterations(mock_run, monkeypatch, tmp_path):
+    """3-item plan, max_iterations=1, worker marks 1 done -> MAX_ITERATIONS."""
     cfg = tmp_path / "ralph.yaml"
     cfg.write_text(
         """\
-max_iterations: 2
+max_iterations: 1
 default_model: opus
 loop:
   - step_name: worker
@@ -251,10 +289,24 @@ loop:
     monkeypatch.chdir(tmp_path)
 
     state_dir = tmp_path / STATE_DIR / "current"
+    plan = _make_plan(
+        items=[
+            {"id": 1, "title": "A", "details": "a", "done": False},
+            {"id": 2, "title": "B", "details": "b", "done": False},
+            {"id": 3, "title": "C", "details": "c", "done": False},
+        ]
+    )
+
+    call_count = {"n": 0}
 
     def fake_claude(prompt, model, system_prompt):
-        (state_dir / "review-result.md").write_text(VERDICT_REVISE)
-        (state_dir / "review-feedback.md").write_text("more work")
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            (state_dir / "plan.json").write_text(json.dumps(plan))
+        else:
+            p = json.loads((state_dir / "plan.json").read_text())
+            p["items"][0]["done"] = True
+            (state_dir / "plan.json").write_text(json.dumps(p))
 
     mock_run.side_effect = fake_claude
 
@@ -262,10 +314,134 @@ loop:
         main()
     assert exc_info.value.code == 1
 
+    report_path = tmp_path / STATE_DIR / "runs" / "001" / "report.json"
+    data = json.loads(report_path.read_text())
+    assert data["outcome"] == "MAX_ITERATIONS"
+    assert data["items_completed"] == 1
+    assert data["items_total"] == 3
+
 
 @patch("ralphkit.cli.run_claude")
-def test_main_no_review_result_exits(mock_run, monkeypatch, tmp_path):
-    """Loop step produces no review-result.md -> exit 1."""
+def test_main_plan_only_exits_after_planning(mock_run, monkeypatch, tmp_path):
+    """--plan-only flag -> plan.json written, exit 0, no worker runs."""
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text(_minimal_config_yaml())
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ralph-loop", "do stuff", "--config", str(cfg), "-f", "--plan-only"],
+    )
+    monkeypatch.chdir(tmp_path)
+
+    state_dir = tmp_path / STATE_DIR / "current"
+    plan = _make_plan()
+
+    call_count = {"n": 0}
+
+    def fake_claude(prompt, model, system_prompt):
+        call_count["n"] += 1
+        (state_dir / "plan.json").write_text(json.dumps(plan))
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+    assert call_count["n"] == 1  # only planner, no worker
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_plan_flag_skips_planner(mock_run, monkeypatch, tmp_path):
+    """--plan plan.json -> planner not called, file copied."""
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text(_minimal_config_yaml())
+
+    plan = _make_plan(items=[{"id": 1, "title": "A", "details": "a", "done": False}])
+    plan_file = tmp_path / "my_plan.json"
+    plan_file.write_text(json.dumps(plan))
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ralph-loop",
+            "do stuff",
+            "--config",
+            str(cfg),
+            "-f",
+            "--plan",
+            str(plan_file),
+        ],
+    )
+    monkeypatch.chdir(tmp_path)
+
+    state_dir = tmp_path / STATE_DIR / "current"
+    call_count = {"n": 0}
+
+    def fake_claude(prompt, model, system_prompt):
+        call_count["n"] += 1
+        # Worker marks item done
+        p = json.loads((state_dir / "plan.json").read_text())
+        p["items"][0]["done"] = True
+        (state_dir / "plan.json").write_text(json.dumps(p))
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+    assert call_count["n"] == 1  # only worker, no planner
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_plan_flag_file_not_found(mock_run, monkeypatch, tmp_path, capsys):
+    """--plan missing.json -> exit 1."""
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text(_minimal_config_yaml())
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ralph-loop",
+            "do stuff",
+            "--config",
+            str(cfg),
+            "-f",
+            "--plan",
+            "/tmp/missing.json",
+        ],
+    )
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+    assert "not found" in capsys.readouterr().err
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_plan_flag_invalid_json(mock_run, monkeypatch, tmp_path, capsys):
+    """--plan bad.json -> exit 1."""
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text(_minimal_config_yaml())
+    bad_plan = tmp_path / "bad.json"
+    bad_plan.write_text("not json {{{")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ralph-loop", "do stuff", "--config", str(cfg), "-f", "--plan", str(bad_plan)],
+    )
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+    assert "Invalid plan file" in capsys.readouterr().err
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_planner_produces_no_plan(mock_run, monkeypatch, tmp_path, capsys):
+    """Planner runs but doesn't write plan.json -> exit 1."""
     cfg = tmp_path / "ralph.yaml"
     cfg.write_text(_minimal_config_yaml())
     monkeypatch.setattr(
@@ -273,9 +449,176 @@ def test_main_no_review_result_exits(mock_run, monkeypatch, tmp_path):
     )
     monkeypatch.chdir(tmp_path)
 
+    # Planner does nothing (doesn't write plan.json)
+    mock_run.side_effect = lambda *a: None
+
     with pytest.raises(SystemExit) as exc_info:
         main()
     assert exc_info.value.code == 1
+    assert "Planning failed" in capsys.readouterr().err
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_planner_produces_empty_plan(mock_run, monkeypatch, tmp_path, capsys):
+    """Plan with 0 items -> exit 1."""
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text(_minimal_config_yaml())
+    monkeypatch.setattr(
+        sys, "argv", ["ralph-loop", "do stuff", "--config", str(cfg), "-f"]
+    )
+    monkeypatch.chdir(tmp_path)
+
+    state_dir = tmp_path / STATE_DIR / "current"
+
+    def fake_claude(prompt, model, system_prompt):
+        (state_dir / "plan.json").write_text(json.dumps({"goal": "X", "items": []}))
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+    assert "Planning failed" in capsys.readouterr().err
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_worker_corrupts_plan(mock_run, monkeypatch, tmp_path, capsys):
+    """Worker writes bad JSON to plan.json -> exit 1."""
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text(_minimal_config_yaml())
+    monkeypatch.setattr(
+        sys, "argv", ["ralph-loop", "do stuff", "--config", str(cfg), "-f"]
+    )
+    monkeypatch.chdir(tmp_path)
+
+    state_dir = tmp_path / STATE_DIR / "current"
+    plan = _make_plan()
+    call_count = {"n": 0}
+
+    def fake_claude(prompt, model, system_prompt):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            (state_dir / "plan.json").write_text(json.dumps(plan))
+        else:
+            (state_dir / "plan.json").write_text("corrupted {{{")
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+    assert "corrupted" in capsys.readouterr().err.lower()
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_worker_marks_multiple_done(mock_run, monkeypatch, tmp_path):
+    """Worker marks 2 items done in one iteration -> loop completes sooner."""
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text(_minimal_config_yaml())
+    monkeypatch.setattr(
+        sys, "argv", ["ralph-loop", "do stuff", "--config", str(cfg), "-f"]
+    )
+    monkeypatch.chdir(tmp_path)
+
+    state_dir = tmp_path / STATE_DIR / "current"
+    plan = _make_plan()
+    call_count = {"n": 0}
+
+    def fake_claude(prompt, model, system_prompt):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            (state_dir / "plan.json").write_text(json.dumps(plan))
+        else:
+            # Mark both items done at once
+            p = json.loads((state_dir / "plan.json").read_text())
+            for item in p["items"]:
+                item["done"] = True
+            (state_dir / "plan.json").write_text(json.dumps(p))
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+    assert call_count["n"] == 2  # planner + 1 worker (both done in one shot)
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_plan_model_override(mock_run, monkeypatch, tmp_path):
+    """--plan-model sonnet -> planner uses sonnet, worker uses default."""
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text(_minimal_config_yaml())
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ralph-loop",
+            "do stuff",
+            "--config",
+            str(cfg),
+            "-f",
+            "--plan-model",
+            "sonnet",
+        ],
+    )
+    monkeypatch.chdir(tmp_path)
+
+    state_dir = tmp_path / STATE_DIR / "current"
+    plan = _make_plan(items=[{"id": 1, "title": "A", "details": "a", "done": False}])
+    captured_models = []
+
+    def fake_claude(prompt, model, system_prompt):
+        captured_models.append(model)
+        if len(captured_models) == 1:
+            (state_dir / "plan.json").write_text(json.dumps(plan))
+        else:
+            p = json.loads((state_dir / "plan.json").read_text())
+            p["items"][0]["done"] = True
+            (state_dir / "plan.json").write_text(json.dumps(p))
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+    assert captured_models[0] == "sonnet"  # planner
+    assert captured_models[1] == "opus"  # worker
+
+
+@patch("ralphkit.cli.run_claude")
+def test_main_report_includes_plan_stats(mock_run, monkeypatch, tmp_path):
+    """report.json has items_completed, items_total."""
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text(_minimal_config_yaml())
+    monkeypatch.setattr(
+        sys, "argv", ["ralph-loop", "do stuff", "--config", str(cfg), "-f"]
+    )
+    monkeypatch.chdir(tmp_path)
+
+    state_dir = tmp_path / STATE_DIR / "current"
+    plan = _make_plan()
+    call_count = {"n": 0}
+
+    def fake_claude(prompt, model, system_prompt):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            (state_dir / "plan.json").write_text(json.dumps(plan))
+        else:
+            p = json.loads((state_dir / "plan.json").read_text())
+            for item in p["items"]:
+                item["done"] = True
+            (state_dir / "plan.json").write_text(json.dumps(p))
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+
+    report_path = tmp_path / STATE_DIR / "runs" / "001" / "report.json"
+    data = json.loads(report_path.read_text())
+    assert data["items_completed"] == 2
+    assert data["items_total"] == 2
 
 
 @patch("ralphkit.cli.run_claude")
@@ -289,31 +632,17 @@ def test_main_blocked_exits(mock_run, monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
 
     state_dir = tmp_path / STATE_DIR / "current"
+    plan = _make_plan()
+    call_count = {"n": 0}
 
     def fake_claude(prompt, model, system_prompt):
-        (state_dir / "RALPH-BLOCKED.md").write_text("stuck")
-
-    mock_run.side_effect = fake_claude
-
-    with pytest.raises(SystemExit) as exc_info:
-        main()
-    assert exc_info.value.code == 1
-
-
-@patch("ralphkit.cli.run_claude")
-def test_main_unexpected_review_result_exits(mock_run, monkeypatch, tmp_path):
-    """Unknown review result string -> exit 1."""
-    cfg = tmp_path / "ralph.yaml"
-    cfg.write_text(_minimal_config_yaml())
-    monkeypatch.setattr(
-        sys, "argv", ["ralph-loop", "do stuff", "--config", str(cfg), "-f"]
-    )
-    monkeypatch.chdir(tmp_path)
-
-    state_dir = tmp_path / STATE_DIR / "current"
-
-    def fake_claude(prompt, model, system_prompt):
-        (state_dir / "review-result.md").write_text("MAYBE")
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # Planner writes plan
+            (state_dir / "plan.json").write_text(json.dumps(plan))
+        else:
+            # Worker gets blocked
+            (state_dir / "RALPH-BLOCKED.md").write_text("stuck")
 
     mock_run.side_effect = fake_claude
 
@@ -351,21 +680,30 @@ cleanup:
 
     state_dir = tmp_path / STATE_DIR / "current"
     calls = []
+    plan = _make_plan(items=[{"id": 1, "title": "A", "details": "a", "done": False}])
 
     def fake_claude(prompt, model, system_prompt):
         calls.append(prompt)
-        if "Work." in prompt:
-            (state_dir / "review-result.md").write_text(VERDICT_SHIP)
+        if "Init." in prompt:
+            pass  # setup step
+        elif len(calls) == 2:
+            # Planner
+            (state_dir / "plan.json").write_text(json.dumps(plan))
+        elif "Work." in prompt:
+            # Worker marks done
+            p = json.loads((state_dir / "plan.json").read_text())
+            p["items"][0]["done"] = True
+            (state_dir / "plan.json").write_text(json.dumps(p))
+        # cleanup does nothing
 
     mock_run.side_effect = fake_claude
 
     with pytest.raises(SystemExit) as exc_info:
         main()
     assert exc_info.value.code == 0
-    assert len(calls) == 3  # setup + loop + cleanup
+    assert len(calls) == 4  # setup + planner + worker + cleanup
     assert "Init." in calls[0]
-    assert "Work." in calls[1]
-    assert "Cleanup." in calls[2]
+    assert "Cleanup." in calls[3]
 
 
 # ── --list-runs ────────────────────────────────────────────────────
@@ -387,7 +725,6 @@ def test_main_list_runs_empty(mock_run, monkeypatch, tmp_path, capsys):
 @patch("ralphkit.cli.run_claude")
 def test_main_list_runs_shows_runs(mock_run, monkeypatch, tmp_path, capsys):
     """--list-runs shows numbered runs with task first lines."""
-    # Set up some runs manually
     state_root = tmp_path / STATE_DIR
     runs_dir = state_root / "runs"
     (runs_dir / "001").mkdir(parents=True)
@@ -408,6 +745,29 @@ def test_main_list_runs_shows_runs(mock_run, monkeypatch, tmp_path, capsys):
     assert "second task" in out
 
 
+@patch("ralphkit.cli.run_claude")
+def test_main_list_runs_shows_plan_progress(mock_run, monkeypatch, tmp_path, capsys):
+    """--list-runs shows plan item counts when plan.json exists."""
+    state_root = tmp_path / STATE_DIR
+    runs_dir = state_root / "runs"
+    (runs_dir / "001").mkdir(parents=True)
+    (runs_dir / "001" / "task.md").write_text("auth tests")
+    plan = _make_plan()
+    plan["items"][0]["done"] = True
+    (runs_dir / "001" / "plan.json").write_text(json.dumps(plan))
+    (runs_dir / "001" / "report.json").write_text(json.dumps({"outcome": "COMPLETE"}))
+
+    monkeypatch.setattr(
+        sys, "argv", ["ralph-loop", "--list-runs", "--state-dir", str(state_root)]
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+    out = capsys.readouterr().out
+    assert "COMPLETE" in out
+    assert "1/2" in out
+
+
 # ── Run number in banner ──────────────────────────────────────────
 
 
@@ -421,9 +781,18 @@ def test_main_shows_run_number(mock_run, monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
 
     state_dir = tmp_path / STATE_DIR / "current"
+    plan = _make_plan(items=[{"id": 1, "title": "A", "details": "a", "done": False}])
+
+    call_count = {"n": 0}
 
     def fake_claude(prompt, model, system_prompt):
-        (state_dir / "review-result.md").write_text(VERDICT_SHIP)
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            (state_dir / "plan.json").write_text(json.dumps(plan))
+        else:
+            p = json.loads((state_dir / "plan.json").read_text())
+            p["items"][0]["done"] = True
+            (state_dir / "plan.json").write_text(json.dumps(p))
 
     mock_run.side_effect = fake_claude
 
@@ -447,9 +816,18 @@ def test_main_no_existing_task_proceeds(mock_run, monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
 
     state_dir = tmp_path / STATE_DIR / "current"
+    plan = _make_plan(items=[{"id": 1, "title": "A", "details": "a", "done": False}])
+
+    call_count = {"n": 0}
 
     def fake_claude(prompt, model, system_prompt):
-        (state_dir / "review-result.md").write_text(VERDICT_SHIP)
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            (state_dir / "plan.json").write_text(json.dumps(plan))
+        else:
+            p = json.loads((state_dir / "plan.json").read_text())
+            p["items"][0]["done"] = True
+            (state_dir / "plan.json").write_text(json.dumps(p))
 
     mock_run.side_effect = fake_claude
 
@@ -466,7 +844,7 @@ def test_main_no_existing_task_proceeds(mock_run, monkeypatch, tmp_path):
 def test_main_shows_step_numbering(mock_run, mock_time, monkeypatch, tmp_path, capsys):
     """Step numbering [N/M] appears in output."""
     cfg = tmp_path / "ralph.yaml"
-    cfg.write_text(_minimal_config_with_two_loop_steps())
+    cfg.write_text(_minimal_config_yaml())
     monkeypatch.setattr(
         sys, "argv", ["ralph-loop", "do stuff", "--config", str(cfg), "-f"]
     )
@@ -474,10 +852,18 @@ def test_main_shows_step_numbering(mock_run, mock_time, monkeypatch, tmp_path, c
 
     state_dir = tmp_path / STATE_DIR / "current"
     mock_time.time.return_value = 100.0
+    plan = _make_plan(items=[{"id": 1, "title": "A", "details": "a", "done": False}])
+
+    call_count = {"n": 0}
 
     def fake_claude(prompt, model, system_prompt):
-        if "Review." in prompt:
-            (state_dir / "review-result.md").write_text(VERDICT_SHIP)
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            (state_dir / "plan.json").write_text(json.dumps(plan))
+        else:
+            p = json.loads((state_dir / "plan.json").read_text())
+            p["items"][0]["done"] = True
+            (state_dir / "plan.json").write_text(json.dumps(p))
 
     mock_run.side_effect = fake_claude
 
@@ -486,8 +872,7 @@ def test_main_shows_step_numbering(mock_run, mock_time, monkeypatch, tmp_path, c
     assert exc_info.value.code == 0
 
     out = capsys.readouterr().out
-    assert "[1/2]" in out
-    assert "[2/2]" in out
+    assert "[1/1]" in out
 
 
 @patch("ralphkit.cli.time")
@@ -502,22 +887,31 @@ def test_main_shows_timing(mock_run, mock_time, monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
 
     state_dir = tmp_path / STATE_DIR / "current"
-    # time.time() calls: start_time, iter_start, step_t0, step_end(x2), iter_end, total(x2)
-    mock_time.time.return_value = 142.1
-    # Override first few calls to control step elapsed
+    plan = _make_plan(items=[{"id": 1, "title": "A", "details": "a", "done": False}])
+
     call_count = {"n": 0}
-    times = [100.0, 100.0, 100.0, 114.3]  # start, iter_start, step_t0, step_end
+    # time.time() calls: start, planning_before, planning_t0, planning_end, plan_summary...
+    # then loop: iter_start, step_t0, step_end, ...
+    times = [100.0, 100.0, 100.0, 114.3]  # start, planning, t0, step_end
+
+    time_call_count = {"n": 0}
 
     def fake_time():
-        call_count["n"] += 1
-        if call_count["n"] <= len(times):
-            return times[call_count["n"] - 1]
+        time_call_count["n"] += 1
+        if time_call_count["n"] <= len(times):
+            return times[time_call_count["n"] - 1]
         return 142.1
 
     mock_time.time.side_effect = fake_time
 
     def fake_claude(prompt, model, system_prompt):
-        (state_dir / "review-result.md").write_text(VERDICT_SHIP)
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            (state_dir / "plan.json").write_text(json.dumps(plan))
+        else:
+            p = json.loads((state_dir / "plan.json").read_text())
+            p["items"][0]["done"] = True
+            (state_dir / "plan.json").write_text(json.dumps(p))
 
     mock_run.side_effect = fake_claude
 
@@ -535,7 +929,7 @@ def test_main_shows_timing(mock_run, mock_time, monkeypatch, tmp_path, capsys):
 
 @patch("ralphkit.cli.run_claude")
 def test_main_multiple_iterations_single_run_directory(mock_run, monkeypatch, tmp_path):
-    """A full loop with REVISE then SHIP must create exactly one run directory."""
+    """A full loop with multiple iterations must create exactly one run directory."""
     cfg = tmp_path / "ralph.yaml"
     cfg.write_text(_minimal_config_yaml())
     monkeypatch.setattr(
@@ -544,15 +938,21 @@ def test_main_multiple_iterations_single_run_directory(mock_run, monkeypatch, tm
     monkeypatch.chdir(tmp_path)
 
     state_dir = tmp_path / STATE_DIR / "current"
+    plan = _make_plan()
     call_count = {"n": 0}
 
     def fake_claude(prompt, model, system_prompt):
         call_count["n"] += 1
         if call_count["n"] == 1:
-            (state_dir / "review-result.md").write_text(VERDICT_REVISE)
-            (state_dir / "review-feedback.md").write_text("add tests")
+            (state_dir / "plan.json").write_text(json.dumps(plan))
+        elif call_count["n"] == 2:
+            p = json.loads((state_dir / "plan.json").read_text())
+            p["items"][0]["done"] = True
+            (state_dir / "plan.json").write_text(json.dumps(p))
         else:
-            (state_dir / "review-result.md").write_text(VERDICT_SHIP)
+            p = json.loads((state_dir / "plan.json").read_text())
+            p["items"][1]["done"] = True
+            (state_dir / "plan.json").write_text(json.dumps(p))
 
     mock_run.side_effect = fake_claude
 
@@ -573,9 +973,15 @@ def test_main_two_invocations_create_two_runs(mock_run, monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
 
     state_dir = tmp_path / STATE_DIR / "current"
+    plan = _make_plan(items=[{"id": 1, "title": "A", "details": "a", "done": False}])
 
     def fake_claude(prompt, model, system_prompt):
-        (state_dir / "review-result.md").write_text(VERDICT_SHIP)
+        if not (state_dir / "plan.json").exists():
+            (state_dir / "plan.json").write_text(json.dumps(plan))
+        else:
+            p = json.loads((state_dir / "plan.json").read_text())
+            p["items"][0]["done"] = True
+            (state_dir / "plan.json").write_text(json.dumps(p))
 
     mock_run.side_effect = fake_claude
 
@@ -620,11 +1026,20 @@ loop:
     monkeypatch.chdir(tmp_path)
 
     state_dir = tmp_path / STATE_DIR / "current"
+    plan = _make_plan(items=[{"id": 1, "title": "A", "details": "a", "done": False}])
     captured_prompts = []
 
+    call_count = {"n": 0}
+
     def fake_claude(prompt, model, system_prompt):
+        call_count["n"] += 1
         captured_prompts.append(prompt)
-        (state_dir / "review-result.md").write_text(VERDICT_SHIP)
+        if call_count["n"] == 1:
+            (state_dir / "plan.json").write_text(json.dumps(plan))
+        else:
+            p = json.loads((state_dir / "plan.json").read_text())
+            p["items"][0]["done"] = True
+            (state_dir / "plan.json").write_text(json.dumps(p))
 
     mock_run.side_effect = fake_claude
 

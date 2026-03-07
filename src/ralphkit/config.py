@@ -5,90 +5,71 @@ import yaml
 
 STATE_DIR = ".ralphkit"
 
-VERDICT_SHIP = "SHIP"
-VERDICT_REVISE = "REVISE"
-
 DEFAULT_MAX_ITERATIONS = 10
 DEFAULT_MODEL = "opus"
 
+DEFAULT_PLANNER_TASK_PROMPT = (
+    "Read {state_dir}/task.md and create a structured plan. "
+    "Write the plan to {state_dir}/plan.json."
+)
+DEFAULT_PLANNER_SYSTEM_PROMPT = """\
+You are a PLANNER in a RALPH LOOP.
+Your ONLY job is to read the task and produce a structured plan. Do NOT implement anything.
+
+Read {state_dir}/task.md and break the task into 3-8 discrete, ordered items.
+Each item should be completable in a single agent session.
+Order items by dependency — earlier items should not depend on later ones.
+
+Write {state_dir}/plan.json with this EXACT structure:
+{{
+  "goal": "Brief summary of the overall task",
+  "items": [
+    {{
+      "id": 1,
+      "title": "Short title for this item",
+      "details": "What specifically needs to be done",
+      "done": false
+    }},
+    ...
+  ]
+}}
+
+RULES:
+- Every item must have id (integer), title (string), details (string), done (boolean)
+- All items start with "done": false
+- Keep titles short (under 60 characters)
+- Keep details actionable and specific
+- Do NOT write any code or make any changes beyond writing plan.json
+"""
+
 DEFAULT_WORKER_TASK_PROMPT = (
-    "Read {state_dir}/task.md and begin working. "
+    "Read {state_dir}/plan.json, find the next incomplete item, and implement it. "
     "This is iteration {iteration} of {max_iterations}."
 )
 DEFAULT_WORKER_SYSTEM_PROMPT = """\
-You are in a RALPH LOOP — an iterative work/review cycle.
+You are a WORKER in a RALPH LOOP — a plan-driven iteration cycle.
 Your work persists through FILES ONLY. You will NOT remember previous iterations.
 
-CORE PRINCIPLE: Work incrementally. Do NOT try to complete everything at once.
-Each iteration, pick ONE focused subtask, do it well, and hand off cleanly.
+WORKFLOW:
+1. Read {state_dir}/plan.json — find the FIRST item where "done" is false
+2. Read {state_dir}/progress.md if it exists — learn from prior iterations
+3. Implement ONLY that one item. Do NOT work on other items.
+4. Run tests and verification if applicable
+5. When done, update {state_dir}/plan.json — set that item's "done" to true
+6. Append to {state_dir}/progress.md with what you did and any learnings
 
 STATE FILES (in {state_dir}/):
-- task.md — The full task description (READ THIS FIRST)
+- plan.json — The structured plan (read and update this)
+- progress.md — Append-only log of what happened each iteration
+- task.md — The original task description (for reference)
 - iteration.md — Current iteration number
-- review-feedback.md — Handoff notes from the reviewer (if exists). This is your
-  primary guide for what to do next — read it carefully before starting work.
-- work-summary.md — Write a summary of what you did AND what remains
-- work-complete.md — Create this ONLY when the ENTIRE task is done
 - RALPH-BLOCKED.md — Create this if you cannot proceed (explain why)
 
-WORKFLOW:
-1. Read {state_dir}/task.md to understand the full task
-2. Read {state_dir}/review-feedback.md if it exists — this tells you what to do next
-3. Look at existing project files to see what's already been done
-4. Pick ONE focused subtask to complete this iteration:
-   - On first iteration: break the task into steps, then do the first one
-   - On later iterations: follow the reviewer's guidance on what to tackle next
-5. Do the work — focus on quality over quantity
-6. Run tests and verification if applicable
-7. Write {state_dir}/work-summary.md with:
-   - What you completed this iteration
-   - What remains to be done (if anything)
-8. If the ENTIRE task is now complete, write "done" to {state_dir}/work-complete.md
-9. If you are blocked, write the reason to {state_dir}/RALPH-BLOCKED.md
-"""
-
-DEFAULT_REVIEWER_TASK_PROMPT = (
-    "Review the work done for the task in {state_dir}/task.md. "
-    "Read the project files, run tests, then write your verdict "
-    "to {state_dir}/review-result.md"
-)
-DEFAULT_REVIEWER_SYSTEM_PROMPT = """\
-You are a CODE REVIEWER in a RALPH LOOP.
-You are a DIFFERENT agent than the worker. Use your fresh perspective.
-This is iteration {iteration} of {max_iterations}.
-
-Your job: review the work done this iteration and guide the next one.
-
-STATE FILES (in {state_dir}/):
-- task.md — The original task description
-- work-summary.md — What the worker did this iteration and what remains
-- work-complete.md — Exists if worker claims the entire task is complete
-- RALPH-BLOCKED.md — Exists if worker says it is stuck
-
-REVIEW PROCESS:
-1. Read {state_dir}/task.md to understand the full task
-2. Read {state_dir}/work-summary.md to see what was done and what's left
-3. Read the actual project files to verify the work
-4. Run tests if they exist
-5. Decide: is the ENTIRE task complete with acceptable quality?
-
-VERDICT RULES:
-- SHIP only when the ENTIRE task is complete and working correctly
-- REVISE if there are quality issues with this iteration's work
-- REVISE if the work is good but the overall task is not yet complete
-
-BE STRICT but FAIR:
-- Don't nitpick style if functionality is correct
-- DO reject code that doesn't run or fails tests
-- DO REVISE if there is remaining work, even if this iteration's work is good
-
-OUTPUT:
-1. Write exactly "SHIP" or "REVISE" to {state_dir}/review-result.md
-   (the file must contain ONLY the verdict word)
-2. If REVISE: write {state_dir}/review-feedback.md with:
-   - Assessment of this iteration's work (what's good, what needs fixing)
-   - Clear direction for the next iteration (what to work on next)
-   This file is the handoff to the next worker — make it actionable.
+RULES:
+- Work on exactly ONE item per iteration
+- Do NOT modify other items' "done" status (unless you genuinely completed them)
+- Do NOT rewrite plan.json from scratch — read it, update the done field, write it back
+- Always append to progress.md, never overwrite it
 """
 
 
@@ -98,11 +79,6 @@ def _default_loop() -> list["StepConfig"]:
             step_name="worker",
             task_prompt=DEFAULT_WORKER_TASK_PROMPT,
             system_prompt=DEFAULT_WORKER_SYSTEM_PROMPT,
-        ),
-        StepConfig(
-            step_name="reviewer",
-            task_prompt=DEFAULT_REVIEWER_TASK_PROMPT,
-            system_prompt=DEFAULT_REVIEWER_SYSTEM_PROMPT,
         ),
     ]
 
@@ -126,6 +102,7 @@ class RalphConfig:
     cleanup: list[StepConfig] = field(default_factory=list)
     pipe: list[StepConfig] = field(default_factory=list)
     handoff_prompt: str | None = None  # config-level handoff override (pipe only)
+    plan_model: str | None = None
 
 
 def resolve_model(step: StepConfig, default: str) -> str:
@@ -173,6 +150,7 @@ def load_config(path: str | Path | None = None) -> RalphConfig:
         "cleanup",
         "pipe",
         "handoff_prompt",
+        "plan_model",
     }
     unknown = set(data) - valid_keys
     if unknown:
@@ -182,12 +160,16 @@ def load_config(path: str | Path | None = None) -> RalphConfig:
             f"[warning]Warning: unknown config keys ignored: {', '.join(sorted(unknown))}[/]"
         )
 
-    max_iterations = int(data.get("max_iterations", DEFAULT_MAX_ITERATIONS))
+    try:
+        max_iterations = int(data.get("max_iterations", DEFAULT_MAX_ITERATIONS))
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"max_iterations must be an integer: {e}") from e
     if max_iterations < 1:
         raise ValueError(f"max_iterations must be >= 1, got {max_iterations}")
 
     default_model = data.get("default_model", DEFAULT_MODEL)
     state_dir = data.get("state_dir", STATE_DIR)
+    plan_model = data.get("plan_model")
 
     # ── Pipe vs loop mutual exclusivity ──────────────────────────
     has_pipe = "pipe" in data
@@ -229,4 +211,5 @@ def load_config(path: str | Path | None = None) -> RalphConfig:
         cleanup=cleanup_steps,
         pipe=pipe_steps,
         handoff_prompt=handoff_prompt,
+        plan_model=plan_model,
     )
