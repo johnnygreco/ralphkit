@@ -40,9 +40,9 @@ def build_job_script(
     if env:
         lines.append("")
         for k, v in env.items():
-            if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', k):
+            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", k):
                 raise ValueError(f"Invalid environment variable name: {k!r}")
-            lines.append(f'export {k}={shlex.quote(str(v))}')
+            lines.append(f"export {k}={shlex.quote(str(v))}")
     lines += [
         "",
         f'{ralph_cmd} 2>&1 | tee "$LOG_FILE"',
@@ -61,12 +61,14 @@ def parse_session_list(output: str) -> list[dict]:
     for line in output.strip().splitlines():
         parts = line.split("\t")
         if parts and parts[0].startswith(JOB_ID_PREFIX):
-            jobs.append({
-                "name": parts[0],
-                "created": parts[1] if len(parts) > 1 else None,
-                "activity": parts[2] if len(parts) > 2 else None,
-                "pane_dead": parts[3] if len(parts) > 3 else None,
-            })
+            jobs.append(
+                {
+                    "name": parts[0],
+                    "created": parts[1] if len(parts) > 1 else None,
+                    "activity": parts[2] if len(parts) > 2 else None,
+                    "pane_dead": parts[3] if len(parts) > 3 else None,
+                }
+            )
     return jobs
 
 

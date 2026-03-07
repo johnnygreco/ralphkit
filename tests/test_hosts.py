@@ -45,7 +45,9 @@ hosts:
     user: deploy
 """
     )
-    with pytest.raises(ValueError, match="Host 'broken' is missing required field 'hostname'"):
+    with pytest.raises(
+        ValueError, match="Host 'broken' is missing required field 'hostname'"
+    ):
         load_hosts_config(cfg)
 
 

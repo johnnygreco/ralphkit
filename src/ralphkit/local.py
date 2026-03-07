@@ -15,8 +15,7 @@ def _check_tmux() -> None:
     """Verify tmux is installed."""
     if not shutil.which("tmux"):
         raise SystemExit(
-            "tmux is required for job submission.\n"
-            "  Install: brew install tmux"
+            "tmux is required for job submission.\n  Install: brew install tmux"
         )
 
 
@@ -34,8 +33,20 @@ def submit_local(
     script_file.chmod(0o700)
 
     subprocess.run(
-        ["tmux", "new-session", "-d", "-s", job_id, str(script_file),
-         ";", "set-option", "-t", job_id, "remain-on-exit", "on"],
+        [
+            "tmux",
+            "new-session",
+            "-d",
+            "-s",
+            job_id,
+            str(script_file),
+            ";",
+            "set-option",
+            "-t",
+            job_id,
+            "remain-on-exit",
+            "on",
+        ],
         check=True,
     )
 
@@ -56,10 +67,7 @@ def tail_local_logs(job_id: str, follow: bool = False) -> None:
     """Tail a local job's log file."""
     log_file = log_path_local(job_id)
     if not log_file.exists():
-        raise SystemExit(
-            f"No log file for job '{job_id}'.\n"
-            f"  Expected: {log_file}"
-        )
+        raise SystemExit(f"No log file for job '{job_id}'.\n  Expected: {log_file}")
     flag = "-f" if follow else "-100"
     subprocess.run(["tail", flag, str(log_file)])
 
@@ -73,6 +81,5 @@ def cancel_local(job_id: str) -> None:
     )
     if result.returncode != 0:
         raise SystemExit(
-            f"No job '{job_id}' found.\n"
-            f"  Run 'ralph jobs' to list active jobs."
+            f"No job '{job_id}' found.\n  Run 'ralph jobs' to list active jobs."
         )

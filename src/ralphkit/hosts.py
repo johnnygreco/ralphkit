@@ -18,7 +18,9 @@ def _config_path() -> Path:
     return Path.home() / ".config" / "ralphkit" / "hosts.yaml"
 
 
-def load_hosts_config(path: Path | None = None) -> tuple[str | None, dict[str, HostConfig]]:
+def load_hosts_config(
+    path: Path | None = None,
+) -> tuple[str | None, dict[str, HostConfig]]:
     """Load hosts config from YAML file.
 
     Returns (default_host_name, {name: HostConfig}).
@@ -96,8 +98,7 @@ def resolve_host(name: str, path: Path | None = None) -> HostConfig:
 
     if name not in host_map:
         raise SystemExit(
-            f"Unknown host '{name}'.\n"
-            f"  Available: {', '.join(sorted(host_map))}"
+            f"Unknown host '{name}'.\n  Available: {', '.join(sorted(host_map))}"
         )
 
     return host_map[name]

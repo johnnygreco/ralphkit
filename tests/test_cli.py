@@ -86,7 +86,9 @@ def test_runs_shows_entries(tmp_path):
 def test_run_passes_all_options(mock_fg, tmp_path):
     """All CLI options are forwarded to run_foreground."""
     cfg = tmp_path / "ralph.yaml"
-    cfg.write_text("max_iterations: 1\nloop:\n  - step_name: w\n    task_prompt: W\n    system_prompt: S\n")
+    cfg.write_text(
+        "max_iterations: 1\nloop:\n  - step_name: w\n    task_prompt: W\n    system_prompt: S\n"
+    )
     mock_fg.side_effect = SystemExit(0)
 
     runner.invoke(
@@ -130,7 +132,9 @@ def test_run_no_task_for_pipe_mode(mock_fg):
 @patch("ralphkit.local.shutil.which", return_value="/usr/bin/tmux")
 @patch("ralphkit.local.subprocess.run")
 def test_submit_local(mock_run, mock_which):
-    mock_run.return_value = __import__("subprocess").CompletedProcess(args=[], returncode=0)
+    mock_run.return_value = __import__("subprocess").CompletedProcess(
+        args=[], returncode=0
+    )
     result = runner.invoke(app, ["submit", "do stuff"])
     assert result.exit_code == 0
     assert "Submitted" in result.output
@@ -138,7 +142,9 @@ def test_submit_local(mock_run, mock_which):
 
 @patch("ralphkit.remote.subprocess.run")
 def test_submit_remote(mock_run, tmp_path):
-    mock_run.return_value = __import__("subprocess").CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    mock_run.return_value = __import__("subprocess").CompletedProcess(
+        args=[], returncode=0, stdout="", stderr=""
+    )
     cfg = tmp_path / "hosts.yaml"
     cfg.write_text("hosts:\n  dev:\n    hostname: dev.example.com\n")
     with patch("ralphkit.hosts._config_path", return_value=cfg):
@@ -163,7 +169,8 @@ def test_jobs_local_empty(mock_run):
 @patch("ralphkit.remote.subprocess.run")
 def test_jobs_remote(mock_run, tmp_path):
     mock_run.return_value = __import__("subprocess").CompletedProcess(
-        args=[], returncode=0,
+        args=[],
+        returncode=0,
         stdout="rk-test-0307-1200-ab12\t1709812800\t1709812900\t0\n",
         stderr="",
     )
@@ -207,7 +214,9 @@ def test_hosts_no_config(tmp_path):
 
 def test_hosts_shows_entries(tmp_path):
     cfg = tmp_path / "hosts.yaml"
-    cfg.write_text("default: dev\nhosts:\n  dev:\n    hostname: dev.example.com\n    user: deploy\n")
+    cfg.write_text(
+        "default: dev\nhosts:\n  dev:\n    hostname: dev.example.com\n    user: deploy\n"
+    )
     with patch("ralphkit.hosts._config_path", return_value=cfg):
         result = runner.invoke(app, ["hosts"])
     assert "dev" in result.output

@@ -602,9 +602,7 @@ pipe:
     with pytest.raises(SystemExit) as exc_info:
         run_foreground(task="refactor auth", config_path=str(cfg), force=True)
     assert exc_info.value.code == 0
-    assert (
-        tmp_path / STATE_DIR / "current" / "task.md"
-    ).read_text() == "refactor auth"
+    assert (tmp_path / STATE_DIR / "current" / "task.md").read_text() == "refactor auth"
     assert captured_prompts[0] == "Do: refactor auth"
 
 
@@ -687,9 +685,7 @@ pipe:
 
 
 @patch("ralphkit.engine.run_claude")
-def test_foreground_pipe_step_handoff_prompt_override(
-    mock_run, monkeypatch, tmp_path
-):
+def test_foreground_pipe_step_handoff_prompt_override(mock_run, monkeypatch, tmp_path):
     """Step-level handoff_prompt overrides the default."""
     cfg = tmp_path / "pipe.yaml"
     cfg.write_text(
@@ -723,9 +719,7 @@ pipe:
 
 
 @patch("ralphkit.engine.run_claude")
-def test_foreground_pipe_empty_handoff_prompt_disables(
-    mock_run, monkeypatch, tmp_path
-):
+def test_foreground_pipe_empty_handoff_prompt_disables(mock_run, monkeypatch, tmp_path):
     """Empty string handoff_prompt disables handoff injection."""
     cfg = tmp_path / "pipe.yaml"
     cfg.write_text(

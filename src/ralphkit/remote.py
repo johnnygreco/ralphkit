@@ -65,9 +65,7 @@ def submit_job(
 
     # Pre-flight: working dir exists?
     if wd:
-        result = _ssh_run(
-            host, f"test -d {shlex.quote(wd)}", check=False
-        )
+        result = _ssh_run(host, f"test -d {shlex.quote(wd)}", check=False)
         if result.returncode != 0:
             raise SystemExit(
                 f"Working directory does not exist on '{host.hostname}': {wd}"
@@ -76,7 +74,8 @@ def submit_job(
     # Generate job script
     ralph_cmd = shlex.quote(host.ralph_command) + " run " + shlex.join(ralph_args)
     script = build_job_script(
-        job_id, ralph_cmd,
+        job_id,
+        ralph_cmd,
         working_dir=wd,
         env=host.env,
     )
@@ -111,8 +110,14 @@ def tail_logs(host: HostConfig, job_id: str, follow: bool = False) -> None:
     log_file = f"{LOGS_DIR_SHELL}/{job_id}.log"
     flag = "-f" if follow else "-100"
     subprocess.run(
-        ["ssh", "-t", "-o", "ConnectTimeout=10", _ssh_target(host),
-         f'tail {flag} "{log_file}"'],
+        [
+            "ssh",
+            "-t",
+            "-o",
+            "ConnectTimeout=10",
+            _ssh_target(host),
+            f'tail {flag} "{log_file}"',
+        ],
     )
 
 

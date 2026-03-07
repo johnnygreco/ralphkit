@@ -270,9 +270,7 @@ def run_foreground(
                 t0 = time.time()
 
                 prev_step_name = config.pipe[idx - 2].step_name if idx > 1 else ""
-                next_step_name = (
-                    config.pipe[idx].step_name if idx < total_steps else ""
-                )
+                next_step_name = config.pipe[idx].step_name if idx < total_steps else ""
 
                 pipe_vars: dict[str, str] = {
                     "step_index": str(idx),
@@ -368,9 +366,7 @@ def run_foreground(
             result = state.read_review_result()
             if result is None:
                 report.outcome = "ERROR"
-                console.print(
-                    "[error]Review failed: no review-result.md produced.[/]"
-                )
+                console.print("[error]Review failed: no review-result.md produced.[/]")
                 sys.exit(1)
 
             if result == VERDICT_SHIP:
@@ -380,9 +376,7 @@ def run_foreground(
                 )
                 sys.exit(0)
             elif result == VERDICT_REVISE:
-                console.print(
-                    "  [warning]REVISE \u2014 Reviewer wants changes.[/]"
-                )
+                console.print("  [warning]REVISE \u2014 Reviewer wants changes.[/]")
                 feedback = state.read_review_feedback()
                 if feedback:
                     print_indented_block("Feedback", feedback)

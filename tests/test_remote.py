@@ -80,14 +80,19 @@ def test_submit_job_no_working_dir(mock_run):
 
 @patch("ralphkit.remote.subprocess.run")
 def test_submit_job_no_tmux(mock_run):
-    mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=[], returncode=1, stdout="", stderr=""
+    )
     with pytest.raises(SystemExit, match="tmux is not installed"):
         submit_job(_host(), "rk-abc123", ["do stuff"])
 
 
 @patch("ralphkit.remote.subprocess.run")
 def test_submit_job_working_dir_missing(mock_run):
-    mock_run.side_effect = [_OK, subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")]
+    mock_run.side_effect = [
+        _OK,
+        subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr=""),
+    ]
     with pytest.raises(SystemExit, match="Working directory does not exist"):
         submit_job(_host(), "rk-abc123", ["do stuff"])
 
@@ -95,7 +100,8 @@ def test_submit_job_working_dir_missing(mock_run):
 @patch("ralphkit.remote.subprocess.run")
 def test_list_jobs_parses_output(mock_run):
     mock_run.return_value = subprocess.CompletedProcess(
-        args=[], returncode=0,
+        args=[],
+        returncode=0,
         stdout="rk-abc123\t1234567890\t1234567891\t0\nrk-def456\t1234567892\t1234567893\t1\n",
         stderr="",
     )
@@ -130,7 +136,15 @@ def test_cancel_job_missing_raises_system_exit(mock_run):
 
 def test_get_attach_command():
     cmd = get_attach_command(_host(), "rk-abc123")
-    assert cmd == ["ssh", "-t", "deploy@dev.example.com", "tmux", "attach", "-t", "rk-abc123"]
+    assert cmd == [
+        "ssh",
+        "-t",
+        "deploy@dev.example.com",
+        "tmux",
+        "attach",
+        "-t",
+        "rk-abc123",
+    ]
 
 
 @patch("ralphkit.remote.subprocess.run")

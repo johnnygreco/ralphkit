@@ -86,7 +86,9 @@ def print_jobs_table(jobs: list[dict], host_label: str) -> None:
 
     now = _time.time()
     for job in jobs:
-        status = "[error]exited[/]" if job.get("pane_dead") == "1" else "[success]running[/]"
+        status = (
+            "[error]exited[/]" if job.get("pane_dead") == "1" else "[success]running[/]"
+        )
         created = int(job.get("created") or now)
         duration = fmt_duration(now - created)
         table.add_row(job["name"], host_label, status, duration)

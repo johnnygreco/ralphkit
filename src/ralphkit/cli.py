@@ -84,7 +84,9 @@ def run(
     max_iterations: MaxIterOpt = None,
     default_model: ModelOpt = None,
     state_dir: StateDirOpt = None,
-    force: Annotated[bool, typer.Option("-f", "--force", help="Skip confirmation")] = False,
+    force: Annotated[
+        bool, typer.Option("-f", "--force", help="Skip confirmation")
+    ] = False,
 ) -> None:
     """Run a task locally in the foreground."""
     from ralphkit.engine import run_foreground
@@ -213,7 +215,9 @@ def submit(
         from ralphkit.local import submit_local
 
         submit_local(job_id, ralph_args, working_dir)
-        _print_submit_info(job_id, host=None, hostname="localhost", working_dir=working_dir)
+        _print_submit_info(
+            job_id, host=None, hostname="localhost", working_dir=working_dir
+        )
 
     if attach:
         _do_attach(job_id, host)

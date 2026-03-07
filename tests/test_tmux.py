@@ -13,7 +13,9 @@ def test_build_job_script_basic_output():
 
 
 def test_build_job_script_with_working_dir():
-    script = build_job_script("rk-test-0307-120000-abcd", "ralph run pipe.yml", working_dir="/tmp/work")
+    script = build_job_script(
+        "rk-test-0307-120000-abcd", "ralph run pipe.yml", working_dir="/tmp/work"
+    )
     assert "cd /tmp/work || exit 1" in script or "cd '/tmp/work' || exit 1" in script
 
 
@@ -31,7 +33,7 @@ def test_build_job_script_env_values_are_shell_escaped():
     script = build_job_script(
         "rk-test-0307-120000-abcd",
         "ralph run pipe.yml",
-        env={"DANGER": '$(rm -rf ~)'},
+        env={"DANGER": "$(rm -rf ~)"},
     )
     # shlex.quote wraps in single quotes, preventing execution
     assert "export DANGER='$(rm -rf ~)'" in script

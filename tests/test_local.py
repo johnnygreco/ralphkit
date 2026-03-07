@@ -11,7 +11,9 @@ from ralphkit.local import submit_local, list_local_jobs, cancel_local, tail_loc
 def test_submit_local_calls_tmux_commands(mock_run, mock_which, tmp_path):
     mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
     job_id = "rk-test-0307-120000-abcd"
-    with patch("ralphkit.local.script_path_local", return_value=tmp_path / f"{job_id}.sh"):
+    with patch(
+        "ralphkit.local.script_path_local", return_value=tmp_path / f"{job_id}.sh"
+    ):
         submit_local(job_id, ["pipe.yml"])
 
     # Single tmux call (atomic new-session + set-option)
