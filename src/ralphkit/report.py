@@ -35,6 +35,8 @@ class RunReport:
     outcome: str | None = None
     iterations_completed: int = 0
     total_duration_s: float = 0.0
+    items_completed: int = 0
+    items_total: int = 0
 
     def record_step(
         self,
@@ -117,7 +119,7 @@ class RunReport:
                     "lines_deleted": s.lines_deleted,
                 }
             )
-        return {
+        result = {
             "outcome": self.outcome,
             "iterations_completed": self.iterations_completed,
             "total_duration_s": self.total_duration_s,
@@ -125,6 +127,10 @@ class RunReport:
             "token_usage_by_model": self.token_usage_by_model(),
             "steps": steps,
         }
+        if self.items_total > 0:
+            result["items_completed"] = self.items_completed
+            result["items_total"] = self.items_total
+        return result
 
     def save(self, path: Path) -> None:
         path.write_text(json.dumps(self.to_dict(), indent=2) + "\n")
@@ -178,13 +184,17 @@ def print_report(report: RunReport) -> None:
     outcome_str = report.outcome or "UNKNOWN"
     if report.iterations_completed > 0:
         outcome_str += f" ({report.iterations_completed} iteration(s))"
-    if report.outcome in ("SHIP", "PIPE_COMPLETE"):
+    if report.outcome in ("COMPLETE", "PIPE_COMPLETE"):
         outcome_display = f"[bold green]{outcome_str}[/]"
     elif report.outcome in ("MAX_ITERATIONS", "ERROR"):
         outcome_display = f"[bold red]{outcome_str}[/]"
     else:
         outcome_display = outcome_str
     console.print(f"  Outcome:     {outcome_display}")
+    if report.items_total > 0:
+        console.print(
+            f"  Plan:        {report.items_completed}/{report.items_total} items"
+        )
 
     # Total time
     total_api_ms = sum(
