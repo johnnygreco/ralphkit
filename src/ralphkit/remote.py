@@ -16,9 +16,14 @@ def _ssh_run(
     check: bool = True,
     capture: bool = True,
     input: str | None = None,
+    login_shell: bool = False,
 ) -> subprocess.CompletedProcess:
     """Run a command on the remote host via SSH."""
-    ssh_args = ["ssh", "-o", "ConnectTimeout=10", host, cmd]
+    remote_cmd = cmd
+    if login_shell:
+        # Wrap in login shell so PATH includes homebrew etc. on macOS
+        remote_cmd = f"exec $SHELL -lc {shlex.quote(cmd)}"
+    ssh_args = ["ssh", "-o", "ConnectTimeout=10", host, remote_cmd]
     try:
         return subprocess.run(
             ssh_args,
@@ -64,7 +69,7 @@ def submit_job(
 ) -> None:
     """Submit a ralph job to a remote host via SSH + tmux."""
     # Pre-flight: tmux available?
-    result = _ssh_run(host, "command -v tmux", check=False)
+    result = _ssh_run(host, "command -v tmux", check=False, login_shell=True)
     if result.returncode != 0:
         raise SystemExit(
             f"tmux is not installed on '{host}'.\n"
@@ -99,6 +104,7 @@ def submit_job(
     _ssh_run(
         host,
         f"tmux new-session -d -s {job_id} {script_path} \\; set-option -t {job_id} remain-on-exit on",
+        login_shell=True,
     )
 
 
@@ -108,6 +114,7 @@ def list_jobs(host: str) -> list[dict]:
         host,
         f"tmux list-sessions -F '{TMUX_LIST_FORMAT}' 2>/dev/null || true",
         check=False,
+        login_shell=True,
     )
     return parse_session_list(result.stdout or "")
 
@@ -129,7 +136,9 @@ def tail_logs(host: str, job_id: str, follow: bool = False) -> None:
 
 
 def cancel_job(host: str, job_id: str) -> None:
-    result = _ssh_run(host, f"tmux kill-session -t {job_id}", check=False)
+    result = _ssh_run(
+        host, f"tmux kill-session -t {job_id}", check=False, login_shell=True
+    )
     if result.returncode != 0:
         raise SystemExit(
             f"No job '{job_id}' found on '{host}'.\n"
