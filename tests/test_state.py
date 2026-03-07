@@ -1,3 +1,7 @@
+import json
+
+import pytest
+
 from ralphkit.state import StateDir
 
 
@@ -16,63 +20,23 @@ def test_write_and_read_iteration(tmp_path):
     assert (tmp_path / "iteration.md").read_text() == "3"
 
 
-def test_read_review_result_strips(tmp_path):
-    state = StateDir(tmp_path)
-    (tmp_path / "review-result.md").write_text("  SHIP\n")
-    assert state.read_review_result() == "SHIP"
-
-
 def test_read_missing_returns_none(tmp_path):
     state = StateDir(tmp_path)
-    assert state.read_review_result() is None
-    assert state.read_work_summary() is None
-    assert state.read_review_feedback() is None
+    assert state.read_plan() is None
     assert state.is_blocked() is None
-
-
-def test_clean_removes_state_files(tmp_path):
-    state = StateDir(tmp_path)
-    for name in [
-        "review-result.md",
-        "review-feedback.md",
-        "work-summary.md",
-        "work-complete.md",
-        "RALPH-BLOCKED.md",
-    ]:
-        (tmp_path / name).write_text("x")
-    state.clean()
-    for name in [
-        "review-result.md",
-        "review-feedback.md",
-        "work-summary.md",
-        "work-complete.md",
-        "RALPH-BLOCKED.md",
-    ]:
-        assert not (tmp_path / name).exists()
-
-
-def test_clean_preserves_task_and_iteration(tmp_path):
-    state = StateDir(tmp_path)
-    (tmp_path / "task.md").write_text("task")
-    (tmp_path / "iteration.md").write_text("1")
-    state.clean()
-    assert (tmp_path / "task.md").read_text() == "task"
-    assert (tmp_path / "iteration.md").read_text() == "1"
 
 
 def test_clean_for_next_iteration(tmp_path):
     state = StateDir(tmp_path)
-    (tmp_path / "work-complete.md").write_text("done")
-    (tmp_path / "review-result.md").write_text("REVISE")
-    (tmp_path / "work-summary.md").write_text("summary")
-    (tmp_path / "review-feedback.md").write_text("feedback")
+    (tmp_path / "RALPH-BLOCKED.md").write_text("blocked")
+    (tmp_path / "plan.json").write_text('{"items": []}')
+    (tmp_path / "progress.md").write_text("iteration 1 notes")
     state.clean_for_next_iteration()
-    # These should be removed
-    assert not (tmp_path / "work-complete.md").exists()
-    assert not (tmp_path / "review-result.md").exists()
-    assert not (tmp_path / "work-summary.md").exists()
-    # Feedback should be preserved for next worker iteration
-    assert (tmp_path / "review-feedback.md").read_text() == "feedback"
+    # RALPH-BLOCKED.md should be removed
+    assert not (tmp_path / "RALPH-BLOCKED.md").exists()
+    # plan.json and progress.md should be preserved
+    assert (tmp_path / "plan.json").read_text() == '{"items": []}'
+    assert (tmp_path / "progress.md").read_text() == "iteration 1 notes"
 
 
 def test_is_blocked(tmp_path):
@@ -82,26 +46,9 @@ def test_is_blocked(tmp_path):
     assert state.is_blocked() == "blocked reason"
 
 
-def test_clean_idempotent(tmp_path):
-    state = StateDir(tmp_path)
-    state.clean()  # no files exist, should not raise
-
-
 def test_clean_for_next_iteration_idempotent(tmp_path):
     state = StateDir(tmp_path)
     state.clean_for_next_iteration()  # no files exist, should not raise
-
-
-def test_read_work_summary_returns_content(tmp_path):
-    state = StateDir(tmp_path)
-    (tmp_path / "work-summary.md").write_text("  summary\n")
-    assert state.read_work_summary() == "  summary\n"  # not stripped
-
-
-def test_read_review_feedback_returns_content(tmp_path):
-    state = StateDir(tmp_path)
-    (tmp_path / "review-feedback.md").write_text("  feedback\n")
-    assert state.read_review_feedback() == "  feedback\n"  # not stripped
 
 
 def test_read_task_returns_content(tmp_path):
@@ -113,6 +60,49 @@ def test_read_task_returns_content(tmp_path):
 def test_read_task_returns_none_when_missing(tmp_path):
     state = StateDir(tmp_path)
     assert state.read_task() is None
+
+
+# ── Plan management ────────────────────────────────────────────────
+
+
+def test_write_and_read_plan(tmp_path):
+    state = StateDir(tmp_path)
+    plan = {
+        "goal": "Test goal",
+        "items": [
+            {"id": 1, "title": "Item 1", "details": "Do thing 1", "done": False},
+            {"id": 2, "title": "Item 2", "details": "Do thing 2", "done": True},
+        ],
+    }
+    state.write_plan(plan)
+    result = state.read_plan()
+    assert result == plan
+
+
+def test_read_plan_missing_returns_none(tmp_path):
+    state = StateDir(tmp_path)
+    assert state.read_plan() is None
+
+
+def test_read_plan_invalid_json_returns_none(tmp_path):
+    state = StateDir(tmp_path)
+    (tmp_path / "plan.json").write_text("not valid json {{{")
+    assert state.read_plan() is None
+
+
+def test_copy_plan(tmp_path):
+    state = StateDir(tmp_path)
+    source = tmp_path / "external_plan.json"
+    plan = {"goal": "Test", "items": [{"id": 1, "title": "A", "done": False}]}
+    source.write_text(json.dumps(plan))
+    state.copy_plan(source)
+    assert state.read_plan() == plan
+
+
+def test_copy_plan_missing_source(tmp_path):
+    state = StateDir(tmp_path)
+    with pytest.raises(FileNotFoundError):
+        state.copy_plan(tmp_path / "missing.json")
 
 
 # ── Default path ───────────────────────────────────────────────────
@@ -224,12 +214,21 @@ def test_iterations_do_not_create_run_directories(tmp_path):
     state = StateDir(root)
     state.setup()
 
+    plan = {
+        "goal": "Test",
+        "items": [
+            {"id": 1, "title": "A", "done": False},
+            {"id": 2, "title": "B", "done": False},
+        ],
+    }
+    state.write_plan(plan)
+
     for i in range(1, 4):
         state.write_iteration(i)
         state.write_task("task")
-        (state.path / "review-result.md").write_text("REVISE")
-        (state.path / "work-summary.md").write_text("did stuff")
-        (state.path / "work-complete.md").write_text("done")
+        # Simulate worker marking item done
+        plan["items"][min(i - 1, len(plan["items"]) - 1)]["done"] = True
+        state.write_plan(plan)
         state.clean_for_next_iteration()
 
     runs = list((root / "runs").iterdir())
@@ -244,22 +243,29 @@ def test_full_lifecycle_single_run_directory(tmp_path):
     state.setup()
     state.write_task("build the thing")
 
-    # Iteration 1: REVISE
-    state.write_iteration(1)
-    (state.path / "work-summary.md").write_text("started")
-    (state.path / "review-result.md").write_text("REVISE")
-    (state.path / "review-feedback.md").write_text("needs tests")
-    assert state.read_review_result() == "REVISE"
-    assert state.read_review_feedback() == "needs tests"
-    state.clean_for_next_iteration()
-    # Feedback preserved for next iteration
-    assert state.read_review_feedback() == "needs tests"
+    plan = {
+        "goal": "Build the thing",
+        "items": [
+            {"id": 1, "title": "Part 1", "done": False},
+            {"id": 2, "title": "Part 2", "done": False},
+        ],
+    }
+    state.write_plan(plan)
 
-    # Iteration 2: SHIP
+    # Iteration 1: mark first item done
+    state.write_iteration(1)
+    plan["items"][0]["done"] = True
+    state.write_plan(plan)
+    saved = state.read_plan()
+    assert sum(1 for it in saved["items"] if it["done"]) == 1
+    state.clean_for_next_iteration()
+
+    # Iteration 2: mark second item done
     state.write_iteration(2)
-    (state.path / "work-summary.md").write_text("added tests")
-    (state.path / "review-result.md").write_text("SHIP")
-    assert state.read_review_result() == "SHIP"
+    plan["items"][1]["done"] = True
+    state.write_plan(plan)
+    saved = state.read_plan()
+    assert all(it["done"] for it in saved["items"])
 
     # Still exactly one run directory
     runs = [d for d in (root / "runs").iterdir() if d.is_dir()]
@@ -279,7 +285,9 @@ def test_state_isolation_between_runs(tmp_path):
     state1 = StateDir(root)
     state1.setup()
     state1.write_task("task one")
-    (state1.path / "work-summary.md").write_text("summary one")
+    state1.write_plan(
+        {"goal": "One", "items": [{"id": 1, "title": "A", "done": False}]}
+    )
 
     state2 = StateDir(root)
     state2.setup()
@@ -287,10 +295,10 @@ def test_state_isolation_between_runs(tmp_path):
 
     # Run 001 data is untouched
     assert (root / "runs" / "001" / "task.md").read_text() == "task one"
-    assert (root / "runs" / "001" / "work-summary.md").read_text() == "summary one"
+    assert (root / "runs" / "001" / "plan.json").exists()
     # Run 002 has its own data
     assert (root / "runs" / "002" / "task.md").read_text() == "task two"
-    assert not (root / "runs" / "002" / "work-summary.md").exists()
+    assert not (root / "runs" / "002" / "plan.json").exists()
     # Only two run directories
     runs = sorted(d.name for d in (root / "runs").iterdir() if d.is_dir())
     assert runs == ["001", "002"]
@@ -311,7 +319,8 @@ def test_symlink_and_run_dir_are_consistent(tmp_path):
     symlink_task = (root / "current" / "task.md").read_text()
     assert symlink_task == "hello from run dir"
 
-    # Write through the symlink
-    (root / "current" / "work-summary.md").write_text("hello from symlink")
+    # Write plan through the symlink
+    plan = {"goal": "Test", "items": [{"id": 1, "title": "A", "done": False}]}
+    (root / "current" / "plan.json").write_text(json.dumps(plan))
     # Read through the real run dir path
-    assert state.read_work_summary() == "hello from symlink"
+    assert state.read_plan() == plan

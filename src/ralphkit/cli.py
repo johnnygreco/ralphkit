@@ -1,12 +1,13 @@
 import argparse
+import json
 import sys
 import time
 from dataclasses import replace
 from pathlib import Path
 
 from ralphkit.config import (
-    VERDICT_REVISE,
-    VERDICT_SHIP,
+    DEFAULT_PLANNER_SYSTEM_PROMPT,
+    DEFAULT_PLANNER_TASK_PROMPT,
     StepConfig,
     load_config,
     resolve_model,
@@ -18,10 +19,12 @@ from ralphkit.ui import (
     console,
     fmt_duration,
     print_banner,
+    print_current_item,
     print_error,
-    print_indented_block,
     print_kv,
     print_outcome,
+    print_plan_progress,
+    print_plan_summary,
     print_rule,
     print_step_done,
     print_step_start,
@@ -105,7 +108,7 @@ def _resolve_handoff(
     steps: list[StepConfig],
     state_dir: str,
 ) -> str:
-    """Resolve handoff prompt using 3-tier override: step → config → built-in default."""
+    """Resolve handoff prompt using 3-tier override: step -> config -> built-in default."""
     if step.handoff_prompt is not None:
         return step.handoff_prompt
     if config_handoff is not None:
@@ -113,19 +116,39 @@ def _resolve_handoff(
     return _build_default_handoff(step_index, total_steps, steps, state_dir)
 
 
+def _validate_plan(plan: dict | None) -> str | None:
+    """Validate a plan dict. Returns error message or None if valid."""
+    if plan is None:
+        return "no valid plan.json produced"
+    if not isinstance(plan, dict):
+        return "plan.json is not a JSON object"
+    items = plan.get("items")
+    if not isinstance(items, list) or len(items) == 0:
+        return "Plan has no items"
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            return f"plan item {i} is not an object"
+        for key in ("id", "title", "done"):
+            if key not in item:
+                return f"plan item {i} is missing required field '{key}'"
+    return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Agent pipes and loops for Claude Code.",
         epilog=(
             "modes:\n"
-            "  loop (default)  Iterative work/review cycle. Requires a task.\n"
-            "                  Uses built-in worker+reviewer agents by default.\n"
+            "  loop (default)  Plan-driven iteration. Creates a structured plan,\n"
+            "                  then iterates one item at a time until complete.\n"
             "  pipe            Linear multi-step pipeline. Requires --config\n"
             "                  with a 'pipe' section. Task is optional.\n"
             "\n"
             "examples:\n"
             '  ralph "Add unit tests for utils.py"\n'
             "  ralph task.md --max-iterations 5\n"
+            '  ralph "Add auth" --plan-only\n'
+            '  ralph "Add auth" --plan plan.json\n'
             "  ralph --config pipeline.yaml\n"
             "  ralph --list-runs\n"
         ),
@@ -169,6 +192,22 @@ def main() -> None:
         action="store_true",
         help="List previous runs and exit",
     )
+    parser.add_argument(
+        "--plan",
+        default=None,
+        metavar="PATH",
+        help="Path to pre-made plan.json (skips planning step)",
+    )
+    parser.add_argument(
+        "--plan-only",
+        action="store_true",
+        help="Generate plan and exit without running the loop",
+    )
+    parser.add_argument(
+        "--plan-model",
+        default=None,
+        help="Override model for the planning step",
+    )
     args = parser.parse_args()
 
     # Show help (no error) when invoked with no arguments
@@ -196,6 +235,9 @@ def main() -> None:
     if args.state_dir is not None:
         config = replace(config, state_dir=args.state_dir)
 
+    if args.plan_model is not None:
+        config = replace(config, plan_model=args.plan_model)
+
     state = StateDir(config.state_dir)
 
     # ── --list-runs early exit ─────────────────────────────────────
@@ -205,11 +247,31 @@ def main() -> None:
             console.print("No runs found.")
         else:
             for run_dir in runs:
-                task_file = run_dir / "task.md"
                 first_line = ""
-                if task_file.is_file():
-                    first_line = task_file.read_text().split("\n", 1)[0]
-                console.print(f"  [label]#{run_dir.name}[/]  {first_line}")
+                task_path = run_dir / "task.md"
+                if task_path.is_file():
+                    first_line = task_path.read_text().split("\n", 1)[0]
+
+                plan_info = ""
+                plan_path = run_dir / "plan.json"
+                if plan_path.is_file():
+                    try:
+                        plan_data = json.loads(plan_path.read_text())
+                        plan_items = plan_data.get("items", [])
+                        done = sum(1 for it in plan_items if it.get("done", False))
+                        total = len(plan_items)
+                        outcome = ""
+                        report_path = run_dir / "report.json"
+                        if report_path.is_file():
+                            report_data = json.loads(report_path.read_text())
+                            outcome = report_data.get("outcome", "")
+                        if outcome:
+                            plan_info = f"  [dim][{outcome} {done}/{total}][/]"
+                        else:
+                            plan_info = f"  [dim][{done}/{total}][/]"
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                console.print(f"  [label]#{run_dir.name}[/]  {first_line}{plan_info}")
         sys.exit(0)
 
     if config.pipe:
@@ -240,9 +302,11 @@ def main() -> None:
         print_kv("Pipe", _step_names(config.pipe))
     else:
         print_kv("Max iter", str(config.max_iterations))
-        print_kv("Setup", _step_names(config.setup))
+        if config.setup:
+            print_kv("Setup", _step_names(config.setup))
         print_kv("Loop", _step_names(config.loop))
-        print_kv("Cleanup", _step_names(config.cleanup))
+        if config.cleanup:
+            print_kv("Cleanup", _step_names(config.cleanup))
     console.print()
 
     # ── Confirmation ────────────────────────────────────────────────
@@ -395,12 +459,88 @@ def main() -> None:
             print_step_done(fmt_duration(time.time() - t0))
         console.print()
 
+    # ── PLANNING phase ──────────────────────────────────────────────
+    plan = None
+    if args.plan:
+        # User provided a plan file — validate and copy it
+        plan_path = Path(args.plan)
+        if not plan_path.is_file():
+            print_error(f"Plan file not found: {args.plan}")
+            sys.exit(1)
+        try:
+            plan = json.loads(plan_path.read_text())
+        except (json.JSONDecodeError, TypeError) as e:
+            print_error(f"Invalid plan file: {e}")
+            sys.exit(1)
+        err = _validate_plan(plan)
+        if err:
+            print_error(f"Invalid plan file: {err}")
+            sys.exit(1)
+        state.copy_plan(plan_path)
+    else:
+        # Run the planner agent
+        print_rule("Planning")
+        planner_model = config.plan_model or config.default_model
+        planner_step = StepConfig(
+            step_name="planner",
+            task_prompt=DEFAULT_PLANNER_TASK_PROMPT,
+            system_prompt=DEFAULT_PLANNER_SYSTEM_PROMPT,
+        )
+        print_step_start(1, 1, "planner", planner_model)
+        before_diff = git_diff_stat()
+        t0 = time.time()
+        planner_vars = _base_vars(planner_step)
+        planner_vars["model"] = planner_model
+        prompt = _render_prompt(planner_step.task_prompt, planner_vars)
+        system = _render_prompt(planner_step.system_prompt, planner_vars)
+        claude_out = _run_phase(prompt, planner_model, system)
+        _record_step(
+            planner_step, planner_model, claude_out, t0, "planning", before_diff
+        )
+        print_step_done(fmt_duration(time.time() - t0))
+
+        # Validate the plan
+        plan = state.read_plan()
+        err = _validate_plan(plan)
+        if err:
+            print_error(
+                f"Planning failed: {err}. "
+                "Try --plan-only to debug, or provide your own with --plan."
+            )
+            sys.exit(1)
+
+    # Show plan summary
+    items = plan.get("items", [])
+    console.print()
+    console.print(f"  [label]Plan:[/] {len(items)} items")
+    print_plan_summary(plan)
+    console.print()
+
+    # --plan-only: exit after showing the plan
+    if args.plan_only:
+        console.print(f"  Plan written to {state.path / 'plan.json'}")
+        # Ensure plan is written if provided via --plan
+        if not (state.path / "plan.json").exists():
+            state.write_plan(plan)
+        sys.exit(0)
+
     # ── LOOP phase (with cleanup in finally) ────────────────────────
     total_loop_steps = len(config.loop)
+
     try:
         for i in range(1, config.max_iterations + 1):
+            # Read plan once at iteration start (1 file read)
+            plan = state.read_plan()
+
             print_rule(f"Iteration {i} / {config.max_iterations}")
             console.print()
+
+            if plan:
+                for item in plan.get("items", []):
+                    if not item.get("done", False):
+                        print_current_item(item)
+                        console.print()
+                        break
 
             state.write_iteration(i)
             report.iterations_completed = i
@@ -421,44 +561,44 @@ def main() -> None:
 
                 _check_blocked()
 
-            # Show work summary if present
-            summary = state.read_work_summary()
-            if summary:
-                print_indented_block("Summary", summary)
+            # Re-read plan after worker runs (1 file read)
+            plan = state.read_plan()
+            if plan is None:
+                report.outcome = "ERROR"
+                print_error("Worker corrupted plan.json (invalid JSON).")
+                sys.exit(1)
 
+            plan_items = plan.get("items", [])
+            done_count = sum(1 for it in plan_items if it.get("done", False))
+            total_count = len(plan_items)
+            all_done = done_count == total_count
+            report.items_completed = done_count
+            report.items_total = total_count
+
+            console.print()
+            print_plan_progress(done_count, total_count)
             console.print(
                 f"  [dim]Iteration {i} completed in {fmt_duration(time.time() - iter_start)}[/]"
             )
 
-            # ── Check review result ─────────────────────────────────
-            result = state.read_review_result()
-            if result is None:
-                report.outcome = "ERROR"
-                console.print("[error]Review failed: no review-result.md produced.[/]")
-                sys.exit(1)
-
-            if result == VERDICT_SHIP:
-                report.outcome = "SHIP"
+            if all_done:
+                report.outcome = "COMPLETE"
+                console.print()
                 print_outcome(
-                    f"SHIP \u2014 Task completed in {i} iteration(s)!", success=True
+                    f"COMPLETE \u2014 All {total_count} items done in {i} iteration(s)!",
+                    success=True,
                 )
                 sys.exit(0)
-            elif result == VERDICT_REVISE:
-                console.print("  [warning]REVISE \u2014 Reviewer wants changes.[/]")
-                feedback = state.read_review_feedback()
-                if feedback:
-                    print_indented_block("Feedback", feedback)
-                state.clean_for_next_iteration()
-            else:
-                report.outcome = "ERROR"
-                console.print(f"[error]Unexpected review result: '{result}'[/]")
-                sys.exit(1)
+
+            state.clean_for_next_iteration()
 
         # ── Max iterations reached ──────────────────────────────────
+        # plan was already read at end of last iteration
         report.outcome = "MAX_ITERATIONS"
         console.print()
         print_outcome(
-            f"Max iterations ({config.max_iterations}) reached without SHIP.",
+            f"Max iterations ({config.max_iterations}) reached. "
+            f"{report.items_completed}/{report.items_total} items completed.",
             success=False,
         )
         sys.exit(1)
