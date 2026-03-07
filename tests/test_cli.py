@@ -122,3 +122,94 @@ def test_run_no_task_for_pipe_mode(mock_fg):
     runner.invoke(app, ["run"])
     mock_fg.assert_called_once()
     assert mock_fg.call_args.kwargs["task"] is None
+
+
+# -- submit command --
+
+
+@patch("ralphkit.local.shutil.which", return_value="/usr/bin/tmux")
+@patch("ralphkit.local.subprocess.run")
+def test_submit_local(mock_run, mock_which):
+    mock_run.return_value = __import__("subprocess").CompletedProcess(args=[], returncode=0)
+    result = runner.invoke(app, ["submit", "do stuff"])
+    assert result.exit_code == 0
+    assert "Submitted" in result.output
+
+
+@patch("ralphkit.remote.subprocess.run")
+def test_submit_remote(mock_run, tmp_path):
+    mock_run.return_value = __import__("subprocess").CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    cfg = tmp_path / "hosts.yaml"
+    cfg.write_text("hosts:\n  dev:\n    hostname: dev.example.com\n")
+    with patch("ralphkit.hosts._config_path", return_value=cfg):
+        result = runner.invoke(app, ["submit", "do stuff", "--host", "dev"])
+    assert result.exit_code == 0
+    assert "Submitted" in result.output
+    assert "dev.example.com" in result.output
+
+
+# -- jobs command --
+
+
+@patch("ralphkit.local.subprocess.run")
+def test_jobs_local_empty(mock_run):
+    mock_run.return_value = __import__("subprocess").CompletedProcess(
+        args=[], returncode=1, stdout="", stderr=""
+    )
+    result = runner.invoke(app, ["jobs"])
+    assert "No active jobs" in result.output
+
+
+@patch("ralphkit.remote.subprocess.run")
+def test_jobs_remote(mock_run, tmp_path):
+    mock_run.return_value = __import__("subprocess").CompletedProcess(
+        args=[], returncode=0,
+        stdout="rk-test-0307-1200-ab12\t1709812800\t1709812900\t0\n",
+        stderr="",
+    )
+    cfg = tmp_path / "hosts.yaml"
+    cfg.write_text("hosts:\n  dev:\n    hostname: dev.example.com\n")
+    with patch("ralphkit.hosts._config_path", return_value=cfg):
+        result = runner.invoke(app, ["jobs", "--host", "dev"])
+    assert result.exit_code == 0
+    assert "rk-test" in result.output
+
+
+# -- logs command --
+
+
+def test_logs_local_missing(tmp_path):
+    with patch("ralphkit.local.log_path_local", return_value=tmp_path / "nope.log"):
+        result = runner.invoke(app, ["logs", "rk-nonexistent"])
+    assert result.exit_code != 0
+
+
+# -- cancel command --
+
+
+@patch("ralphkit.local.subprocess.run")
+def test_cancel_local_success(mock_run):
+    mock_run.return_value = __import__("subprocess").CompletedProcess(
+        args=[], returncode=0, stdout="", stderr=""
+    )
+    result = runner.invoke(app, ["cancel", "rk-abc123"])
+    assert "Cancelled" in result.output
+
+
+# -- hosts command --
+
+
+def test_hosts_no_config(tmp_path):
+    with patch("ralphkit.hosts._config_path", return_value=tmp_path / "nope.yaml"):
+        result = runner.invoke(app, ["hosts"])
+    assert "No hosts configured" in result.output
+
+
+def test_hosts_shows_entries(tmp_path):
+    cfg = tmp_path / "hosts.yaml"
+    cfg.write_text("default: dev\nhosts:\n  dev:\n    hostname: dev.example.com\n    user: deploy\n")
+    with patch("ralphkit.hosts._config_path", return_value=cfg):
+        result = runner.invoke(app, ["hosts"])
+    assert "dev" in result.output
+    assert "dev.example.com" in result.output
+    assert "default" in result.output

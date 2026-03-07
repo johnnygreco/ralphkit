@@ -177,3 +177,33 @@ hosts:
     )
     with pytest.raises(ValueError, match="Host 'dev' config must be a mapping"):
         load_hosts_config(cfg)
+
+
+def test_load_hosts_config_env_not_mapping(tmp_path):
+    cfg = tmp_path / "hosts.yaml"
+    cfg.write_text(
+        """\
+hosts:
+  dev:
+    hostname: dev.example.com
+    env: true
+"""
+    )
+    with pytest.raises(ValueError, match="Host 'dev' env must be a mapping"):
+        load_hosts_config(cfg)
+
+
+def test_load_hosts_config_env_numeric_values_converted(tmp_path):
+    cfg = tmp_path / "hosts.yaml"
+    cfg.write_text(
+        """\
+hosts:
+  dev:
+    hostname: dev.example.com
+    env:
+      PORT: 8080
+      DEBUG: true
+"""
+    )
+    _, hosts = load_hosts_config(cfg)
+    assert hosts["dev"].env == {"PORT": "8080", "DEBUG": "True"}

@@ -1,3 +1,5 @@
+import pytest
+
 from ralphkit.tmux import build_job_script, parse_session_list
 
 
@@ -5,8 +7,9 @@ def test_build_job_script_basic_output():
     script = build_job_script("rk-test-0307-120000-abcd", "ralph run pipe.yml")
     assert script.startswith("#!/usr/bin/env bash\n")
     assert "set -uo pipefail" in script
-    assert "tee" in script
+    assert 'tee "$LOG_FILE"' in script
     assert "RC=${PIPESTATUS[0]}" in script
+    assert 'LOG_FILE="$LOG_DIR/rk-test-0307-120000-abcd.log"' in script
 
 
 def test_build_job_script_with_working_dir():
@@ -20,8 +23,36 @@ def test_build_job_script_with_env():
         "ralph run pipe.yml",
         env={"MY_VAR": "hello", "OTHER": "world"},
     )
-    assert 'export MY_VAR="hello"' in script
-    assert 'export OTHER="world"' in script
+    assert "export MY_VAR=hello" in script
+    assert "export OTHER=world" in script
+
+
+def test_build_job_script_env_values_are_shell_escaped():
+    script = build_job_script(
+        "rk-test-0307-120000-abcd",
+        "ralph run pipe.yml",
+        env={"DANGER": '$(rm -rf ~)'},
+    )
+    # shlex.quote wraps in single quotes, preventing execution
+    assert "export DANGER='$(rm -rf ~)'" in script
+
+
+def test_build_job_script_env_invalid_key_raises():
+    with pytest.raises(ValueError, match="Invalid environment variable name"):
+        build_job_script(
+            "rk-test-0307-120000-abcd",
+            "ralph run pipe.yml",
+            env={"BAD KEY": "val"},
+        )
+
+
+def test_build_job_script_env_numeric_values_converted():
+    script = build_job_script(
+        "rk-test-0307-120000-abcd",
+        "ralph run pipe.yml",
+        env={"PORT": 8080},
+    )
+    assert "export PORT=8080" in script
 
 
 def test_build_job_script_without_optional_args():

@@ -6,28 +6,33 @@ import pytest
 from ralphkit.local import submit_local, list_local_jobs, cancel_local, tail_local_logs
 
 
+@patch("ralphkit.local.shutil.which", return_value="/usr/bin/tmux")
 @patch("ralphkit.local.subprocess.run")
-def test_submit_local_calls_tmux_commands(mock_run, tmp_path):
+def test_submit_local_calls_tmux_commands(mock_run, mock_which, tmp_path):
     mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
     job_id = "rk-test-0307-120000-abcd"
     with patch("ralphkit.local.script_path_local", return_value=tmp_path / f"{job_id}.sh"):
         submit_local(job_id, ["pipe.yml"])
 
-    # _check_tmux + tmux new-session + tmux set-option = 3 calls
-    assert mock_run.call_count == 3
-    # First call is _check_tmux (which tmux)
-    assert mock_run.call_args_list[0][0][0] == ["which", "tmux"]
-    # Second call is tmux new-session
-    new_session_args = mock_run.call_args_list[1][0][0]
-    assert new_session_args[:4] == ["tmux", "new-session", "-d", "-s"]
-    assert new_session_args[4] == job_id
-    # Third call is tmux set-option
-    set_option_args = mock_run.call_args_list[2][0][0]
-    assert set_option_args == ["tmux", "set-option", "-t", job_id, "remain-on-exit", "on"]
+    # Single tmux call (atomic new-session + set-option)
+    assert mock_run.call_count == 1
+    tmux_args = mock_run.call_args_list[0][0][0]
+    assert tmux_args[:4] == ["tmux", "new-session", "-d", "-s"]
+    assert tmux_args[4] == job_id
+    # Verify atomic: set-option chained via ";"
+    assert ";" in tmux_args
+    assert "remain-on-exit" in tmux_args
 
 
+@patch("ralphkit.local.shutil.which", return_value=None)
+def test_submit_local_no_tmux_raises(mock_which):
+    with pytest.raises(SystemExit, match="tmux is required"):
+        submit_local("rk-test-0307-120000-abcd", ["pipe.yml"])
+
+
+@patch("ralphkit.local.shutil.which", return_value="/usr/bin/tmux")
 @patch("ralphkit.local.subprocess.run")
-def test_submit_local_script_file_is_executable(mock_run, tmp_path):
+def test_submit_local_script_file_is_executable(mock_run, mock_which, tmp_path):
     mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
     job_id = "rk-test-0307-120000-abcd"
     script_file = tmp_path / f"{job_id}.sh"
@@ -35,8 +40,8 @@ def test_submit_local_script_file_is_executable(mock_run, tmp_path):
         submit_local(job_id, ["pipe.yml"])
 
     assert script_file.exists()
-    # Check executable bit (0o755 means owner execute bit is set)
-    assert script_file.stat().st_mode & 0o100
+    # Check permissions are 0o700 (owner-only)
+    assert script_file.stat().st_mode & 0o777 == 0o700
 
 
 @patch("ralphkit.local.subprocess.run")
