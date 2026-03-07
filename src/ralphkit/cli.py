@@ -234,6 +234,12 @@ def submit(
             "--ralph-version", help="ralphkit version for remote (default: latest)"
         ),
     ] = None,
+    allow_prerelease: Annotated[
+        bool,
+        typer.Option(
+            "--allow-prerelease", help="Allow prerelease versions for remote uvx"
+        ),
+    ] = False,
 ) -> None:
     """Submit a task to run in the background (local tmux or remote)."""
     from ralphkit.jobs import make_job_id
@@ -253,6 +259,7 @@ def submit(
             ralph_args,
             working_dir=working_dir,
             ralph_version=ralph_version,
+            allow_prerelease=allow_prerelease,
         )
         _print_submit_info(job_id, host=host, working_dir=working_dir)
     else:

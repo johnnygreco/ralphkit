@@ -121,9 +121,11 @@ Submit a task to run in a detached tmux session (locally or on a remote host).
 
 | Option | Description |
 |--------|-------------|
-| `--host NAME` / `-H` | Run on a remote host (from hosts config) |
+| `--host NAME` / `-H` | Run on a remote SSH host (from `~/.ssh/config`) |
 | `--working-dir PATH` | Working directory for the job |
 | `--attach` | Attach to the tmux session after submitting |
+| `--ralph-version VER` | Pin ralphkit version for remote execution |
+| `--allow-prerelease` | Allow prerelease versions for remote uvx |
 | All `run` options | `--config`, `--max-iterations`, `--default-model`, `--state-dir` |
 
 ### Job Management
@@ -134,7 +136,6 @@ ralph logs JOB_ID [--host NAME]     # View job logs (-F to follow)
 ralph cancel JOB_ID [--host NAME]   # Cancel a running job
 ralph attach JOB_ID [--host NAME]   # Attach to a job's tmux session
 ralph runs                          # List past completed runs
-ralph hosts                         # List configured remote hosts
 ```
 
 ## Config
@@ -285,37 +286,30 @@ Submit jobs to remote machines via SSH + tmux. Useful for offloading long-runnin
 
 ### Setup
 
-1. Ensure the remote host has `tmux` and `ralph` (ralphkit) installed.
-2. Set up SSH access to the remote host (key-based auth recommended). Configure connection details in `~/.ssh/config` as usual:
+1. Ensure the remote host has `tmux` and `uv` installed.
+2. Set up SSH access to the remote host (key-based auth recommended). Configure connection details in `~/.ssh/config`:
    ```
    Host mini
      HostName my-mac-mini.local
      User donnie
    ```
-3. Create `~/.config/ralphkit/hosts.yaml`:
 
-```yaml
-default: mini  # optional, shown in `ralph hosts` output
-
-hosts:
-  mini:
-    hostname: mini                          # SSH host (matches ~/.ssh/config)
-    working_dir: /Users/donnie/project      # optional
-    ralph_command: ralph                    # optional, defaults to "ralph"
-    env:                                    # optional environment variables
-      CLAUDE_MODEL: opus
-```
-
-The `hostname` field is passed directly to `ssh`, so it can be an SSH config alias, a hostname, or an IP address. All SSH config options (user, port, identity file, proxy, etc.) are handled by your SSH config.
+The `--host` flag takes an SSH config name directly — no additional ralphkit config needed. Remote jobs run via `uvx --from ralphkit@latest ralph`, so ralphkit doesn't need to be pre-installed on the remote host.
 
 ### Submitting Remote Jobs
 
 ```bash
-# Submit to a configured host
+# Submit to a remote host
 ralph submit "Add unit tests for auth" --host mini
 
 # Override working directory
 ralph submit "Fix the build" --host mini --working-dir /path/to/project
+
+# Pin a specific version
+ralph submit "Fix the build" --host mini --ralph-version 0.5.0
+
+# Use a prerelease version
+ralph submit "Fix the build" --host mini --allow-prerelease
 
 # Submit and immediately attach
 ralph submit "Refactor database layer" --host mini --attach
