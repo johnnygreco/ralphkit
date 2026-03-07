@@ -7,7 +7,7 @@ if [ -z "$1" ]; then
   echo "Usage: $0 VERSION  (e.g. $0 0.1.0)"
   exit 1
 fi
-VERSION="$1"
+VERSION="$(echo "$1" | sed -E 's/-(alpha|beta|rc)/\1/g')"
 TAG="v${VERSION}"
 
 BRANCH="$(git branch --show-current)"
