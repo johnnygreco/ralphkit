@@ -20,7 +20,11 @@ def test_build_job_script_with_working_dir():
 def test_build_job_script_without_optional_args():
     script = build_job_script("rk-test-0307-120000-abcd", "ralph run pipe.yml")
     assert "cd " not in script
-    assert "export " not in script
+
+
+def test_build_job_script_exports_path():
+    script = build_job_script("rk-test-0307-120000-abcd", "ralph run pipe.yml")
+    assert 'export PATH="$HOME/.local/bin' in script
 
 
 def test_parse_session_list_empty_string():
