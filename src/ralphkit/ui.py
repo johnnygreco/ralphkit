@@ -1,5 +1,7 @@
 """Centralized terminal output using Rich."""
 
+import time as _time
+
 from rich import box
 from rich.box import HEAVY
 from rich.console import Console
@@ -104,3 +106,23 @@ def print_current_item(item: dict) -> None:
     item_id = item.get("id", "?")
     title = item.get("title", "")
     console.print(f"  [label]Item:[/] #{item_id} \u2014 {title}")
+
+
+def print_jobs_table(jobs: list[dict], host_label: str) -> None:
+    """Display a rich table of jobs with status and duration."""
+    table = Table(box=box.SIMPLE_HEAVY, show_edge=False, padding=(0, 1))
+    table.add_column("Job ID", style="label")
+    table.add_column("Host")
+    table.add_column("Status")
+    table.add_column("Duration", justify="right")
+
+    now = _time.time()
+    for job in jobs:
+        status = (
+            "[error]exited[/]" if job.get("pane_dead") == "1" else "[success]running[/]"
+        )
+        created = int(job.get("created") or now)
+        duration = fmt_duration(now - created)
+        table.add_row(job["name"], host_label, status, duration)
+
+    console.print(table)

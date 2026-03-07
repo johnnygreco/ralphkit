@@ -1,621 +1,370 @@
-import argparse
-import json
-import sys
-import time
-from dataclasses import replace
+import os
 from pathlib import Path
+from typing import Annotated, Optional
 
-from ralphkit.config import (
-    DEFAULT_PLANNER_SYSTEM_PROMPT,
-    DEFAULT_PLANNER_TASK_PROMPT,
-    StepConfig,
-    load_config,
-    resolve_model,
-)
-from ralphkit.report import RunReport, git_diff_stat, print_report
-from ralphkit.runner import run_claude
-from ralphkit.state import StateDir
-from ralphkit.ui import (
-    console,
-    fmt_duration,
-    print_banner,
-    print_current_item,
-    print_error,
-    print_kv,
-    print_outcome,
-    print_plan_progress,
-    print_plan_summary,
-    print_rule,
-    print_step_done,
-    print_step_start,
-    print_warning,
+import typer
+from typer.core import TyperGroup
+
+from ralphkit.ui import console
+
+
+class RalphGroup(TyperGroup):
+    """Custom group that routes bare `ralph "task"` to `ralph run "task"`."""
+
+    def parse_args(self, ctx, args):
+        if args and args[0] not in self.commands and not args[0].startswith("-"):
+            args = ["run"] + args
+        return super().parse_args(ctx, args)
+
+
+app = typer.Typer(
+    cls=RalphGroup,
+    help="ralphkit \u2014 agent pipes and loops for Claude Code.",
+    rich_markup_mode="rich",
+    no_args_is_help=True,
 )
 
 
-def _run_phase(prompt: str, model: str, system_prompt: str) -> dict | None:
-    """Run a claude phase, exiting on failure."""
-    try:
-        return run_claude(prompt, model, system_prompt)
-    except RuntimeError as e:
-        print_error(f"Error: {e}")
-        sys.exit(1)
+# -- Shared option types --
+
+ConfigOpt = Annotated[
+    Optional[Path],
+    typer.Option(
+        "--config", "-c", help="Path to YAML config file", exists=True, dir_okay=False
+    ),
+]
+MaxIterOpt = Annotated[
+    Optional[int], typer.Option("--max-iterations", help="Override max iterations")
+]
+ModelOpt = Annotated[
+    Optional[str], typer.Option("--default-model", help="Override default model")
+]
+StateDirOpt = Annotated[
+    Optional[str], typer.Option("--state-dir", help="Override state directory")
+]
+HostOpt = Annotated[
+    Optional[str],
+    typer.Option("--host", "-H", help="Remote host name (from hosts config)"),
+]
 
 
-def resolve_task(raw: str) -> str:
-    """If the string ends with .md and the file exists, read it. Otherwise return as-is."""
-    if raw.endswith(".md"):
-        p = Path(raw)
-        try:
-            return p.read_text()
-        except (FileNotFoundError, OSError):
-            pass
-    return raw
+# -- Version callback --
 
 
-def _render_prompt(template: str, variables: dict[str, str]) -> str:
-    """Render a prompt template with safe substitution (unrecognized keys left as-is)."""
+def _version_callback(value: bool) -> None:
+    if value:
+        from ralphkit._version import version
 
-    class SafeDict(dict):
-        def __missing__(self, key):
-            return "{" + key + "}"
-
-    return template.format_map(SafeDict(variables))
+        print(f"ralphkit {version}")
+        raise typer.Exit()
 
 
-def _step_names(steps: list[StepConfig]) -> str:
-    return ", ".join(s.step_name for s in steps) if steps else "(none)"
+@app.callback()
+def main_callback(
+    version: Annotated[
+        Optional[bool],
+        typer.Option(
+            "--version", callback=_version_callback, is_eager=True, help="Show version"
+        ),
+    ] = None,
+) -> None:
+    pass
 
 
-def _build_default_handoff(
-    step_index: int,
-    total_steps: int,
-    steps: list[StepConfig],
-    state_dir: str,
-) -> str:
-    """Build position-aware default handoff instructions for a pipe step."""
-    step_name = steps[step_index - 1].step_name
-    parts = []
+# -- run command --
 
-    # Read from previous step's handoff
-    if step_index > 1:
-        prev_name = steps[step_index - 2].step_name
-        parts.append(
-            f"Read {state_dir}/handoff__{prev_name}__to__{step_name}.md "
-            f"for context from the previous step."
-        )
 
-    # Write handoff for next step
-    if step_index < total_steps:
-        next_name = steps[step_index].step_name
-        parts.append(
-            f"When you finish, write your output and handoff notes to "
-            f"{state_dir}/handoff__{step_name}__to__{next_name}.md"
-        )
+@app.command()
+def run(
+    task: Annotated[
+        Optional[str],
+        typer.Argument(help="Task description (string or path to .md file)"),
+    ] = None,
+    config: ConfigOpt = None,
+    max_iterations: MaxIterOpt = None,
+    default_model: ModelOpt = None,
+    state_dir: StateDirOpt = None,
+    force: Annotated[
+        bool, typer.Option("-f", "--force", help="Skip confirmation")
+    ] = False,
+    plan: Annotated[
+        Optional[Path],
+        typer.Option("--plan", help="Path to pre-made plan.json (skips planning step)"),
+    ] = None,
+    plan_only: Annotated[
+        bool,
+        typer.Option("--plan-only", help="Generate plan and exit"),
+    ] = False,
+    plan_model: Annotated[
+        Optional[str],
+        typer.Option("--plan-model", help="Override model for planning step"),
+    ] = None,
+) -> None:
+    """Run a task locally in the foreground."""
+    from ralphkit.engine import run_foreground
 
-    # Always suggest reading task.md
-    parts.append(
-        f"If {state_dir}/task.md exists, read it for the overall task context."
+    run_foreground(
+        task=task,
+        config_path=str(config) if config else None,
+        max_iterations=max_iterations,
+        default_model=default_model,
+        state_dir=state_dir,
+        force=force,
+        plan_path=str(plan) if plan else None,
+        plan_only=plan_only,
+        plan_model=plan_model,
     )
 
-    return "\n\n".join(parts)
+
+# -- runs command --
 
 
-def _resolve_handoff(
-    step: StepConfig,
-    config_handoff: str | None,
-    step_index: int,
-    total_steps: int,
-    steps: list[StepConfig],
-    state_dir: str,
-) -> str:
-    """Resolve handoff prompt using 3-tier override: step -> config -> built-in default."""
-    if step.handoff_prompt is not None:
-        return step.handoff_prompt
-    if config_handoff is not None:
-        return config_handoff
-    return _build_default_handoff(step_index, total_steps, steps, state_dir)
+@app.command()
+def runs(state_dir: StateDirOpt = None) -> None:
+    """List past completed runs."""
+    import json
+
+    from ralphkit.state import StateDir
+
+    sd = StateDir(state_dir or ".ralphkit")
+    run_list = sd.list_runs()
+    if not run_list:
+        console.print("No runs found.")
+    else:
+        for run_dir in run_list:
+            task_file = run_dir / "task.md"
+            first_line = ""
+            if task_file.is_file():
+                first_line = task_file.read_text().split("\n", 1)[0]
+
+            plan_info = ""
+            plan_path = run_dir / "plan.json"
+            if plan_path.is_file():
+                try:
+                    plan_data = json.loads(plan_path.read_text())
+                    plan_items = plan_data.get("items", [])
+                    done = sum(1 for it in plan_items if it.get("done", False))
+                    total = len(plan_items)
+                    outcome = ""
+                    report_path = run_dir / "report.json"
+                    if report_path.is_file():
+                        report_data = json.loads(report_path.read_text())
+                        outcome = report_data.get("outcome", "")
+                    if outcome:
+                        plan_info = f"  [dim][{outcome} {done}/{total}][/]"
+                    else:
+                        plan_info = f"  [dim][{done}/{total}][/]"
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            console.print(f"  [label]#{run_dir.name}[/]  {first_line}{plan_info}")
 
 
-def _validate_plan(plan: dict | None) -> str | None:
-    """Validate a plan dict. Returns error message or None if valid."""
-    if plan is None:
-        return "no valid plan.json produced"
-    if not isinstance(plan, dict):
-        return "plan.json is not a JSON object"
-    items = plan.get("items")
-    if not isinstance(items, list) or len(items) == 0:
-        return "Plan has no items"
-    for i, item in enumerate(items):
-        if not isinstance(item, dict):
-            return f"plan item {i} is not an object"
-        for key in ("id", "title", "done"):
-            if key not in item:
-                return f"plan item {i} is missing required field '{key}'"
-    return None
+# -- submit command --
+
+
+def _build_ralph_args(
+    task: str,
+    config: Path | None,
+    max_iterations: int | None,
+    default_model: str | None,
+    state_dir: str | None,
+    *,
+    remote: bool = False,
+) -> list[str]:
+    """Build argument list for ralph run."""
+    args = [task]
+    if config:
+        args += ["--config", str(config) if remote else str(config.resolve())]
+    if max_iterations is not None:
+        args += ["--max-iterations", str(max_iterations)]
+    if default_model:
+        args += ["--default-model", default_model]
+    if state_dir:
+        args += ["--state-dir", state_dir]
+    return args
+
+
+def _print_submit_info(
+    job_id: str,
+    host: str | None,
+    hostname: str,
+    working_dir: str | None,
+) -> None:
+    host_flag = f" --host {host}" if host else ""
+    console.print()
+    console.print(f"  [success]Submitted[/] {job_id}")
+    console.print(f"  [dim]Host:[/]    {hostname}")
+    if working_dir:
+        console.print(f"  [dim]Dir:[/]     {working_dir}")
+    console.print(f"  [dim]Attach:[/]  ralph attach {job_id}{host_flag}")
+    console.print(f"  [dim]Logs:[/]    ralph logs {job_id}{host_flag}")
+    console.print()
+
+
+def _do_attach(job_id: str, host: str | None) -> None:
+    if host:
+        from ralphkit.hosts import resolve_host
+        from ralphkit.remote import get_attach_command
+
+        cmd = get_attach_command(resolve_host(host), job_id)
+    else:
+        cmd = ["tmux", "attach", "-t", job_id]
+    os.execvp(cmd[0], cmd)
+
+
+@app.command()
+def submit(
+    task: Annotated[str, typer.Argument(help="Task description")],
+    config: ConfigOpt = None,
+    max_iterations: MaxIterOpt = None,
+    default_model: ModelOpt = None,
+    state_dir: StateDirOpt = None,
+    host: HostOpt = None,
+    attach: Annotated[
+        bool, typer.Option("--attach", help="Attach to tmux session after submit")
+    ] = False,
+    working_dir: Annotated[
+        Optional[str], typer.Option("--working-dir", help="Working directory for job")
+    ] = None,
+) -> None:
+    """Submit a task to run in the background (local tmux or remote)."""
+    from ralphkit.jobs import make_job_id
+
+    job_id = make_job_id(task)
+    ralph_args = _build_ralph_args(
+        task, config, max_iterations, default_model, state_dir, remote=bool(host)
+    )
+    ralph_args.append("--force")
+
+    if host:
+        from ralphkit.hosts import resolve_host
+        from ralphkit.remote import submit_job
+
+        host_cfg = resolve_host(host)
+        submit_job(host_cfg, job_id, ralph_args, working_dir=working_dir)
+        _print_submit_info(
+            job_id,
+            host=host,
+            hostname=host_cfg.hostname,
+            working_dir=working_dir or host_cfg.working_dir,
+        )
+    else:
+        from ralphkit.local import submit_local
+
+        submit_local(job_id, ralph_args, working_dir)
+        _print_submit_info(
+            job_id, host=None, hostname="localhost", working_dir=working_dir
+        )
+
+    if attach:
+        _do_attach(job_id, host)
+
+
+# -- jobs command --
+
+
+@app.command()
+def jobs(host: HostOpt = None) -> None:
+    """List active ralphkit jobs."""
+    from ralphkit.ui import print_jobs_table
+
+    if host:
+        from ralphkit.hosts import resolve_host
+        from ralphkit.remote import list_jobs
+
+        items = list_jobs(resolve_host(host))
+    else:
+        from ralphkit.local import list_local_jobs
+
+        items = list_local_jobs()
+
+    if not items:
+        console.print("No active jobs.")
+        return
+
+    print_jobs_table(items, host_label=host or "local")
+
+
+# -- logs command --
+
+
+@app.command()
+def logs(
+    job_id: Annotated[str, typer.Argument(help="Job ID")],
+    host: HostOpt = None,
+    follow: Annotated[
+        bool, typer.Option("-F", "--follow", help="Follow log output")
+    ] = False,
+) -> None:
+    """View logs for a running or completed job."""
+    if host:
+        from ralphkit.hosts import resolve_host
+        from ralphkit.remote import tail_logs
+
+        tail_logs(resolve_host(host), job_id, follow)
+    else:
+        from ralphkit.local import tail_local_logs
+
+        tail_local_logs(job_id, follow)
+
+
+# -- cancel command --
+
+
+@app.command()
+def cancel(
+    job_id: Annotated[str, typer.Argument(help="Job ID")],
+    host: HostOpt = None,
+) -> None:
+    """Cancel a running job."""
+    if host:
+        from ralphkit.hosts import resolve_host
+        from ralphkit.remote import cancel_job
+
+        cancel_job(resolve_host(host), job_id)
+    else:
+        from ralphkit.local import cancel_local
+
+        cancel_local(job_id)
+
+    console.print(f"  [success]Cancelled[/] {job_id}")
+
+
+# -- attach command --
+
+
+@app.command()
+def attach(
+    job_id: Annotated[str, typer.Argument(help="Job ID")],
+    host: HostOpt = None,
+) -> None:
+    """Attach to a job's tmux session."""
+    _do_attach(job_id, host)
+
+
+# -- hosts command --
+
+
+@app.command()
+def hosts() -> None:
+    """List configured remote hosts."""
+    from ralphkit.hosts import load_hosts_config
+
+    default, host_map = load_hosts_config()
+    if not host_map:
+        console.print("No hosts configured.")
+        console.print("  [dim]Create ~/.config/ralphkit/hosts.yaml[/]")
+        return
+    for name, cfg in sorted(host_map.items()):
+        marker = " [success](default)[/]" if name == default else ""
+        user_part = f"{cfg.user}@" if cfg.user else ""
+        console.print(f"  [label]{name}[/]{marker}  {user_part}{cfg.hostname}")
+        if cfg.working_dir:
+            console.print(f"    [dim]dir: {cfg.working_dir}[/]")
+
+
+# -- Entry point --
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Agent pipes and loops for Claude Code.",
-        epilog=(
-            "modes:\n"
-            "  loop (default)  Plan-driven iteration. Creates a structured plan,\n"
-            "                  then iterates one item at a time until complete.\n"
-            "  pipe            Linear multi-step pipeline. Requires --config\n"
-            "                  with a 'pipe' section. Task is optional.\n"
-            "\n"
-            "examples:\n"
-            '  ralph "Add unit tests for utils.py"\n'
-            "  ralph task.md --max-iterations 5\n"
-            '  ralph "Add auth" --plan-only\n'
-            '  ralph "Add auth" --plan plan.json\n'
-            "  ralph --config pipeline.yaml\n"
-            "  ralph --list-runs\n"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument(
-        "task",
-        nargs="?",
-        default=None,
-        help="Task description (string or path to .md file)",
-    )
-    parser.add_argument(
-        "--config",
-        default=None,
-        help="Path to YAML config file (optional; uses built-in defaults if omitted)",
-    )
-    parser.add_argument(
-        "--max-iterations",
-        type=int,
-        default=None,
-        help="Override max iterations from config (default: 10)",
-    )
-    parser.add_argument(
-        "--default-model",
-        default=None,
-        help="Override default model from config (default: opus)",
-    )
-    parser.add_argument(
-        "--state-dir",
-        default=None,
-        help="Override state directory (default: .ralphkit)",
-    )
-    parser.add_argument(
-        "-f",
-        "--force",
-        action="store_true",
-        help="Skip confirmation prompt",
-    )
-    parser.add_argument(
-        "--list-runs",
-        action="store_true",
-        help="List previous runs and exit",
-    )
-    parser.add_argument(
-        "--plan",
-        default=None,
-        metavar="PATH",
-        help="Path to pre-made plan.json (skips planning step)",
-    )
-    parser.add_argument(
-        "--plan-only",
-        action="store_true",
-        help="Generate plan and exit without running the loop",
-    )
-    parser.add_argument(
-        "--plan-model",
-        default=None,
-        help="Override model for the planning step",
-    )
-    args = parser.parse_args()
-
-    # Show help (no error) when invoked with no arguments
-    if len(sys.argv) == 1:
-        parser.print_help()
-        sys.exit(0)
-
-    try:
-        config = load_config(args.config)
-    except ValueError as e:
-        print_error(f"Config error: {e}")
-        sys.exit(1)
-
-    if args.max_iterations is not None:
-        if args.max_iterations < 1:
-            print_error(
-                f"Config error: max_iterations must be >= 1, got {args.max_iterations}"
-            )
-            sys.exit(1)
-        config = replace(config, max_iterations=args.max_iterations)
-
-    if args.default_model is not None:
-        config = replace(config, default_model=args.default_model)
-
-    if args.state_dir is not None:
-        config = replace(config, state_dir=args.state_dir)
-
-    if args.plan_model is not None:
-        config = replace(config, plan_model=args.plan_model)
-
-    state = StateDir(config.state_dir)
-
-    # ── --list-runs early exit ─────────────────────────────────────
-    if args.list_runs:
-        runs = state.list_runs()
-        if not runs:
-            console.print("No runs found.")
-        else:
-            for run_dir in runs:
-                first_line = ""
-                task_path = run_dir / "task.md"
-                if task_path.is_file():
-                    first_line = task_path.read_text().split("\n", 1)[0]
-
-                plan_info = ""
-                plan_path = run_dir / "plan.json"
-                if plan_path.is_file():
-                    try:
-                        plan_data = json.loads(plan_path.read_text())
-                        plan_items = plan_data.get("items", [])
-                        done = sum(1 for it in plan_items if it.get("done", False))
-                        total = len(plan_items)
-                        outcome = ""
-                        report_path = run_dir / "report.json"
-                        if report_path.is_file():
-                            report_data = json.loads(report_path.read_text())
-                            outcome = report_data.get("outcome", "")
-                        if outcome:
-                            plan_info = f"  [dim][{outcome} {done}/{total}][/]"
-                        else:
-                            plan_info = f"  [dim][{done}/{total}][/]"
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-                console.print(f"  [label]#{run_dir.name}[/]  {first_line}{plan_info}")
-        sys.exit(0)
-
-    if config.pipe:
-        task_content = resolve_task(args.task) if args.task else None
-    elif args.task is None:
-        parser.error("the following arguments are required: task")
-    else:
-        task_content = resolve_task(args.task)
-
-    start_time = time.time()
-
-    state.setup()
-    if task_content is not None:
-        state.write_task(task_content)
-
-    # ── Banner ──────────────────────────────────────────────────────
-    is_pipe = bool(config.pipe)
-    console.print()
-    print_banner(f"RALPH {'PIPE' if is_pipe else 'LOOP'}")
-    console.print()
-    if task_content is not None:
-        first_line = task_content.split("\n", 1)[0]
-        print_kv("Task", first_line)
-    print_kv("Run", f"#{state.path.name}")
-    print_kv("Model", config.default_model)
-    if is_pipe:
-        print_kv("Steps", str(len(config.pipe)))
-        print_kv("Pipe", _step_names(config.pipe))
-    else:
-        print_kv("Max iter", str(config.max_iterations))
-        if config.setup:
-            print_kv("Setup", _step_names(config.setup))
-        print_kv("Loop", _step_names(config.loop))
-        if config.cleanup:
-            print_kv("Cleanup", _step_names(config.cleanup))
-    console.print()
-
-    # ── Confirmation ────────────────────────────────────────────────
-    if not args.force:
-        if is_pipe:
-            print_warning(
-                f"This will run {len(config.pipe)} steps. Each step costs API credits."
-            )
-        else:
-            print_warning(
-                f"Warning: This will run up to {config.max_iterations} iterations."
-            )
-            print_warning("   Each step costs API credits.")
-        console.print()
-        confirm = input("Proceed? (y/N) ").strip()
-        if confirm.lower() not in ("y", "yes"):
-            print_error("Aborted.")
-            sys.exit(1)
-        console.print()
-
-    # ── Common template variables ───────────────────────────────────
-    def _base_vars(step: StepConfig) -> dict[str, str]:
-        return {
-            "step_name": step.step_name,
-            "max_iterations": str(config.max_iterations),
-            "default_model": config.default_model,
-            "model": resolve_model(step, config.default_model),
-            "state_dir": str(state.active_path),
-        }
-
-    def _run_step(
-        step: StepConfig,
-        extra_vars: dict[str, str] | None = None,
-        system_suffix: str = "",
-    ) -> tuple[str, dict | None]:
-        """Run a step and return (model, claude_json_output)."""
-        variables = _base_vars(step)
-        if extra_vars:
-            variables.update(extra_vars)
-        prompt = _render_prompt(step.task_prompt, variables)
-        system = _render_prompt(step.system_prompt, variables)
-        if system_suffix:
-            system = system + "\n\n" + system_suffix
-        model = variables["model"]
-        result = _run_phase(prompt, model, system)
-        return model, result
-
-    report = RunReport()
-
-    def _finalize_report():
-        try:
-            report.total_duration_s = time.time() - start_time
-            print_report(report)
-            report.save(state.path / "report.json")
-            console.print(f"  [dim]Saved to {state.path / 'report.json'}[/]")
-        except Exception:
-            pass
-
-    def _record_step(step, model, claude_out, t0, phase, before_diff, iteration=None):
-        before_add, before_del = before_diff
-        after_add, after_del = git_diff_stat()
-        report.record_step(
-            step_name=step.step_name,
-            model=model,
-            phase=phase,
-            duration_s=time.time() - t0,
-            iteration=iteration,
-            claude_output=claude_out,
-            lines_added=max(0, after_add - before_add),
-            lines_deleted=max(0, after_del - before_del),
-        )
-
-    def _check_blocked() -> None:
-        blocked = state.is_blocked()
-        if blocked:
-            report.outcome = "BLOCKED"
-            console.print()
-            console.print("[error]Blocked:[/]")
-            console.print(blocked)
-            sys.exit(1)
-
-    if is_pipe:
-        # ── PIPE execution ─────────────────────────────────────────
-        total_steps = len(config.pipe)
-        task_str = task_content if task_content is not None else ""
-        state_dir_str = str(state.active_path)
-
-        try:
-            for idx, step in enumerate(config.pipe, 1):
-                step_model = resolve_model(step, config.default_model)
-                print_step_start(idx, total_steps, step.step_name, step_model)
-                before_diff = git_diff_stat()
-                t0 = time.time()
-
-                prev_step_name = config.pipe[idx - 2].step_name if idx > 1 else ""
-                next_step_name = config.pipe[idx].step_name if idx < total_steps else ""
-
-                pipe_vars: dict[str, str] = {
-                    "step_index": str(idx),
-                    "total_steps": str(total_steps),
-                    "prev_step_name": prev_step_name,
-                    "next_step_name": next_step_name,
-                    "task": task_str,
-                }
-
-                # Resolve and render handoff prompt
-                raw_handoff = _resolve_handoff(
-                    step,
-                    config.handoff_prompt,
-                    idx,
-                    total_steps,
-                    config.pipe,
-                    state_dir_str,
-                )
-                handoff = (
-                    _render_prompt(raw_handoff, pipe_vars | _base_vars(step))
-                    if raw_handoff
-                    else ""
-                )
-
-                model, claude_out = _run_step(
-                    step, extra_vars=pipe_vars, system_suffix=handoff
-                )
-                _record_step(step, model, claude_out, t0, "pipe", before_diff)
-                print_step_done(fmt_duration(time.time() - t0))
-
-                _check_blocked()
-
-            report.outcome = "PIPE_COMPLETE"
-            console.print()
-            print_outcome(
-                f"PIPE COMPLETE \u2014 {total_steps} steps finished", success=True
-            )
-            sys.exit(0)
-        finally:
-            if report.outcome is None:
-                report.outcome = "ERROR"
-            _finalize_report()
-
-    # ── SETUP phase ─────────────────────────────────────────────────
-    if config.setup:
-        print_rule("Setup")
-        total_setup = len(config.setup)
-        for idx, step in enumerate(config.setup, 1):
-            print_step_start(idx, total_setup, step.step_name)
-            before_diff = git_diff_stat()
-            t0 = time.time()
-            model, claude_out = _run_step(step)
-            _record_step(step, model, claude_out, t0, "setup", before_diff)
-            print_step_done(fmt_duration(time.time() - t0))
-        console.print()
-
-    # ── PLANNING phase ──────────────────────────────────────────────
-    plan = None
-    if args.plan:
-        # User provided a plan file — validate and copy it
-        plan_path = Path(args.plan)
-        if not plan_path.is_file():
-            print_error(f"Plan file not found: {args.plan}")
-            sys.exit(1)
-        try:
-            plan = json.loads(plan_path.read_text())
-        except (json.JSONDecodeError, TypeError) as e:
-            print_error(f"Invalid plan file: {e}")
-            sys.exit(1)
-        err = _validate_plan(plan)
-        if err:
-            print_error(f"Invalid plan file: {err}")
-            sys.exit(1)
-        state.copy_plan(plan_path)
-    else:
-        # Run the planner agent
-        print_rule("Planning")
-        planner_model = config.plan_model or config.default_model
-        planner_step = StepConfig(
-            step_name="planner",
-            task_prompt=DEFAULT_PLANNER_TASK_PROMPT,
-            system_prompt=DEFAULT_PLANNER_SYSTEM_PROMPT,
-        )
-        print_step_start(1, 1, "planner", planner_model)
-        before_diff = git_diff_stat()
-        t0 = time.time()
-        planner_vars = _base_vars(planner_step)
-        planner_vars["model"] = planner_model
-        prompt = _render_prompt(planner_step.task_prompt, planner_vars)
-        system = _render_prompt(planner_step.system_prompt, planner_vars)
-        claude_out = _run_phase(prompt, planner_model, system)
-        _record_step(
-            planner_step, planner_model, claude_out, t0, "planning", before_diff
-        )
-        print_step_done(fmt_duration(time.time() - t0))
-
-        # Validate the plan
-        plan = state.read_plan()
-        err = _validate_plan(plan)
-        if err:
-            print_error(
-                f"Planning failed: {err}. "
-                "Try --plan-only to debug, or provide your own with --plan."
-            )
-            sys.exit(1)
-
-    # Show plan summary
-    items = plan.get("items", [])
-    console.print()
-    console.print(f"  [label]Plan:[/] {len(items)} items")
-    print_plan_summary(plan)
-    console.print()
-
-    # --plan-only: exit after showing the plan
-    if args.plan_only:
-        console.print(f"  Plan written to {state.path / 'plan.json'}")
-        # Ensure plan is written if provided via --plan
-        if not (state.path / "plan.json").exists():
-            state.write_plan(plan)
-        sys.exit(0)
-
-    # ── LOOP phase (with cleanup in finally) ────────────────────────
-    total_loop_steps = len(config.loop)
-
-    try:
-        for i in range(1, config.max_iterations + 1):
-            # Read plan once at iteration start (1 file read)
-            plan = state.read_plan()
-
-            print_rule(f"Iteration {i} / {config.max_iterations}")
-            console.print()
-
-            if plan:
-                for item in plan.get("items", []):
-                    if not item.get("done", False):
-                        print_current_item(item)
-                        console.print()
-                        break
-
-            state.write_iteration(i)
-            report.iterations_completed = i
-            iter_start = time.time()
-
-            loop_vars = {"iteration": str(i)}
-
-            for idx, step in enumerate(config.loop, 1):
-                step_model = resolve_model(step, config.default_model)
-                print_step_start(idx, total_loop_steps, step.step_name, step_model)
-                before_diff = git_diff_stat()
-                t0 = time.time()
-                model, claude_out = _run_step(step, loop_vars)
-                _record_step(
-                    step, model, claude_out, t0, "loop", before_diff, iteration=i
-                )
-                print_step_done(fmt_duration(time.time() - t0))
-
-                _check_blocked()
-
-            # Re-read plan after worker runs (1 file read)
-            plan = state.read_plan()
-            if plan is None:
-                report.outcome = "ERROR"
-                print_error("Worker corrupted plan.json (invalid JSON).")
-                sys.exit(1)
-
-            plan_items = plan.get("items", [])
-            done_count = sum(1 for it in plan_items if it.get("done", False))
-            total_count = len(plan_items)
-            all_done = done_count == total_count
-            report.items_completed = done_count
-            report.items_total = total_count
-
-            console.print()
-            print_plan_progress(done_count, total_count)
-            console.print(
-                f"  [dim]Iteration {i} completed in {fmt_duration(time.time() - iter_start)}[/]"
-            )
-
-            if all_done:
-                report.outcome = "COMPLETE"
-                console.print()
-                print_outcome(
-                    f"COMPLETE \u2014 All {total_count} items done in {i} iteration(s)!",
-                    success=True,
-                )
-                sys.exit(0)
-
-            state.clean_for_next_iteration()
-
-        # ── Max iterations reached ──────────────────────────────────
-        # plan was already read at end of last iteration
-        report.outcome = "MAX_ITERATIONS"
-        console.print()
-        print_outcome(
-            f"Max iterations ({config.max_iterations}) reached. "
-            f"{report.items_completed}/{report.items_total} items completed.",
-            success=False,
-        )
-        sys.exit(1)
-    finally:
-        if report.outcome is None:
-            report.outcome = "ERROR"
-        # ── CLEANUP phase (always runs) ─────────────────────────────
-        if config.cleanup:
-            console.print()
-            print_rule("Cleanup")
-            total_cleanup = len(config.cleanup)
-            for idx, step in enumerate(config.cleanup, 1):
-                print_step_start(idx, total_cleanup, step.step_name)
-                before_diff = git_diff_stat()
-                t0 = time.time()
-                model, claude_out = _run_step(step)
-                _record_step(step, model, claude_out, t0, "cleanup", before_diff)
-                print_step_done(fmt_duration(time.time() - t0))
-            console.print()
-        _finalize_report()
+    app()
