@@ -1,7 +1,6 @@
 import shlex
 import subprocess
 
-from ralphkit.hosts import HostConfig
 from ralphkit.tmux import (
     LOGS_DIR_SHELL,
     TMUX_LIST_FORMAT,
@@ -10,12 +9,8 @@ from ralphkit.tmux import (
 )
 
 
-def _ssh_target(host: HostConfig) -> str:
-    return f"{host.user}@{host.hostname}" if host.user else host.hostname
-
-
 def _ssh_run(
-    host: HostConfig,
+    host: str,
     cmd: str,
     *,
     check: bool = True,
@@ -23,7 +18,7 @@ def _ssh_run(
     input: str | None = None,
 ) -> subprocess.CompletedProcess:
     """Run a command on the remote host via SSH."""
-    ssh_args = ["ssh", "-o", "ConnectTimeout=10", _ssh_target(host), cmd]
+    ssh_args = ["ssh", "-o", "ConnectTimeout=10", host, cmd]
     try:
         return subprocess.run(
             ssh_args,
@@ -37,47 +32,50 @@ def _ssh_run(
             detail = ""
             if e.stderr and e.stderr.strip():
                 detail = e.stderr.strip().splitlines()[-1]
-            msg = f"SSH connection to '{host.hostname}' failed."
+            msg = f"SSH connection to '{host}' failed."
             if detail:
                 msg += f"\n  {detail}"
-            msg += f"\n  Verify with: ssh {_ssh_target(host)}"
+            msg += f"\n  Verify with: ssh {host}"
             raise SystemExit(msg)
         raise
 
 
+def _ralph_cmd(ralph_args: list[str], ralph_version: str | None = None) -> str:
+    """Build the uvx ralph command string."""
+    pkg = f"ralphkit=={ralph_version}" if ralph_version else "ralphkit"
+    return f"uvx --from {shlex.quote(pkg)} ralph run " + shlex.join(ralph_args)
+
+
 def submit_job(
-    host: HostConfig,
+    host: str,
     job_id: str,
     ralph_args: list[str],
     working_dir: str | None = None,
+    ralph_version: str | None = None,
 ) -> None:
     """Submit a ralph job to a remote host via SSH + tmux."""
-    target = _ssh_target(host)
-    wd = working_dir or host.working_dir
-
     # Pre-flight: tmux available?
     result = _ssh_run(host, "command -v tmux", check=False)
     if result.returncode != 0:
         raise SystemExit(
-            f"tmux is not installed on '{host.hostname}'.\n"
-            f"  Install: ssh {target} 'brew install tmux'"
+            f"tmux is not installed on '{host}'.\n"
+            f"  Install: ssh {host} 'brew install tmux'"
         )
 
     # Pre-flight: working dir exists?
-    if wd:
-        result = _ssh_run(host, f"test -d {shlex.quote(wd)}", check=False)
+    if working_dir:
+        result = _ssh_run(host, f"test -d {shlex.quote(working_dir)}", check=False)
         if result.returncode != 0:
             raise SystemExit(
-                f"Working directory does not exist on '{host.hostname}': {wd}"
+                f"Working directory does not exist on '{host}': {working_dir}"
             )
 
     # Generate job script
-    ralph_cmd = shlex.quote(host.ralph_command) + " run " + shlex.join(ralph_args)
+    ralph_cmd = _ralph_cmd(ralph_args, ralph_version)
     script = build_job_script(
         job_id,
         ralph_cmd,
-        working_dir=wd,
-        env=host.env,
+        working_dir=working_dir,
     )
 
     # Upload script via ssh stdin pipe
@@ -95,7 +93,7 @@ def submit_job(
     )
 
 
-def list_jobs(host: HostConfig) -> list[dict]:
+def list_jobs(host: str) -> list[dict]:
     """List active ralphkit jobs on a remote host."""
     result = _ssh_run(
         host,
@@ -105,7 +103,7 @@ def list_jobs(host: HostConfig) -> list[dict]:
     return parse_session_list(result.stdout or "")
 
 
-def tail_logs(host: HostConfig, job_id: str, follow: bool = False) -> None:
+def tail_logs(host: str, job_id: str, follow: bool = False) -> None:
     """Tail a remote job's log file. Streams to stdout."""
     log_file = f"{LOGS_DIR_SHELL}/{job_id}.log"
     flag = "-f" if follow else "-100"
@@ -115,21 +113,21 @@ def tail_logs(host: HostConfig, job_id: str, follow: bool = False) -> None:
             "-t",
             "-o",
             "ConnectTimeout=10",
-            _ssh_target(host),
+            host,
             f'tail {flag} "{log_file}"',
         ],
     )
 
 
-def cancel_job(host: HostConfig, job_id: str) -> None:
+def cancel_job(host: str, job_id: str) -> None:
     result = _ssh_run(host, f"tmux kill-session -t {job_id}", check=False)
     if result.returncode != 0:
         raise SystemExit(
-            f"No job '{job_id}' found on '{host.hostname}'.\n"
-            f"  Run 'ralph jobs --host {host.name}' to list active jobs."
+            f"No job '{job_id}' found on '{host}'.\n"
+            f"  Run 'ralph jobs --host {host}' to list active jobs."
         )
 
 
-def get_attach_command(host: HostConfig, job_id: str) -> list[str]:
+def get_attach_command(host: str, job_id: str) -> list[str]:
     """Return the ssh command to attach to a remote tmux session."""
-    return ["ssh", "-t", _ssh_target(host), "tmux", "attach", "-t", job_id]
+    return ["ssh", "-t", host, "tmux", "attach", "-t", job_id]

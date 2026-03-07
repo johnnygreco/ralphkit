@@ -1,4 +1,3 @@
-import re
 import shlex
 from pathlib import Path
 
@@ -24,7 +23,6 @@ def build_job_script(
     job_id: str,
     ralph_cmd: str,
     working_dir: str | None = None,
-    env: dict[str, str] | None = None,
 ) -> str:
     """Generate a bash script for a ralph job."""
     lines = [
@@ -37,12 +35,6 @@ def build_job_script(
     ]
     if working_dir:
         lines.append(f"cd {shlex.quote(working_dir)} || exit 1")
-    if env:
-        lines.append("")
-        for k, v in env.items():
-            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", k):
-                raise ValueError(f"Invalid environment variable name: {k!r}")
-            lines.append(f"export {k}={shlex.quote(str(v))}")
     lines += [
         "",
         f'{ralph_cmd} 2>&1 | tee "$LOG_FILE"',

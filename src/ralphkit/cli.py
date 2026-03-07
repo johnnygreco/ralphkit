@@ -45,7 +45,7 @@ StateDirOpt = Annotated[
 ]
 HostOpt = Annotated[
     Optional[str],
-    typer.Option("--host", "-H", help="Remote host name (from hosts config)"),
+    typer.Option("--host", "-H", help="Remote SSH host (from ~/.ssh/config)"),
 ]
 
 
@@ -188,13 +188,12 @@ def _build_ralph_args(
 def _print_submit_info(
     job_id: str,
     host: str | None,
-    hostname: str,
     working_dir: str | None,
 ) -> None:
     host_flag = f" --host {host}" if host else ""
     console.print()
     console.print(f"  [success]Submitted[/] {job_id}")
-    console.print(f"  [dim]Host:[/]    {hostname}")
+    console.print(f"  [dim]Host:[/]    {host or 'localhost'}")
     if working_dir:
         console.print(f"  [dim]Dir:[/]     {working_dir}")
     console.print(f"  [dim]Attach:[/]  ralph attach {job_id}{host_flag}")
@@ -204,10 +203,9 @@ def _print_submit_info(
 
 def _do_attach(job_id: str, host: str | None) -> None:
     if host:
-        from ralphkit.hosts import resolve_host
         from ralphkit.remote import get_attach_command
 
-        cmd = get_attach_command(resolve_host(host), job_id)
+        cmd = get_attach_command(host, job_id)
     else:
         cmd = ["tmux", "attach", "-t", job_id]
     os.execvp(cmd[0], cmd)
@@ -227,6 +225,12 @@ def submit(
     working_dir: Annotated[
         Optional[str], typer.Option("--working-dir", help="Working directory for job")
     ] = None,
+    ralph_version: Annotated[
+        Optional[str],
+        typer.Option(
+            "--ralph-version", help="ralphkit version for remote (default: latest)"
+        ),
+    ] = None,
 ) -> None:
     """Submit a task to run in the background (local tmux or remote)."""
     from ralphkit.jobs import make_job_id
@@ -238,24 +242,21 @@ def submit(
     ralph_args.append("--force")
 
     if host:
-        from ralphkit.hosts import resolve_host
         from ralphkit.remote import submit_job
 
-        host_cfg = resolve_host(host)
-        submit_job(host_cfg, job_id, ralph_args, working_dir=working_dir)
-        _print_submit_info(
+        submit_job(
+            host,
             job_id,
-            host=host,
-            hostname=host_cfg.hostname,
-            working_dir=working_dir or host_cfg.working_dir,
+            ralph_args,
+            working_dir=working_dir,
+            ralph_version=ralph_version,
         )
+        _print_submit_info(job_id, host=host, working_dir=working_dir)
     else:
         from ralphkit.local import submit_local
 
         submit_local(job_id, ralph_args, working_dir)
-        _print_submit_info(
-            job_id, host=None, hostname="localhost", working_dir=working_dir
-        )
+        _print_submit_info(job_id, host=None, working_dir=working_dir)
 
     if attach:
         _do_attach(job_id, host)
@@ -270,10 +271,9 @@ def jobs(host: HostOpt = None) -> None:
     from ralphkit.ui import print_jobs_table
 
     if host:
-        from ralphkit.hosts import resolve_host
         from ralphkit.remote import list_jobs
 
-        items = list_jobs(resolve_host(host))
+        items = list_jobs(host)
     else:
         from ralphkit.local import list_local_jobs
 
@@ -299,10 +299,9 @@ def logs(
 ) -> None:
     """View logs for a running or completed job."""
     if host:
-        from ralphkit.hosts import resolve_host
         from ralphkit.remote import tail_logs
 
-        tail_logs(resolve_host(host), job_id, follow)
+        tail_logs(host, job_id, follow)
     else:
         from ralphkit.local import tail_local_logs
 
@@ -319,10 +318,9 @@ def cancel(
 ) -> None:
     """Cancel a running job."""
     if host:
-        from ralphkit.hosts import resolve_host
         from ralphkit.remote import cancel_job
 
-        cancel_job(resolve_host(host), job_id)
+        cancel_job(host, job_id)
     else:
         from ralphkit.local import cancel_local
 
@@ -341,27 +339,6 @@ def attach(
 ) -> None:
     """Attach to a job's tmux session."""
     _do_attach(job_id, host)
-
-
-# -- hosts command --
-
-
-@app.command()
-def hosts() -> None:
-    """List configured remote hosts."""
-    from ralphkit.hosts import load_hosts_config
-
-    default, host_map = load_hosts_config()
-    if not host_map:
-        console.print("No hosts configured.")
-        console.print("  [dim]Create ~/.config/ralphkit/hosts.yaml[/]")
-        return
-    for name, cfg in sorted(host_map.items()):
-        marker = " [success](default)[/]" if name == default else ""
-        user_part = f"{cfg.user}@" if cfg.user else ""
-        console.print(f"  [label]{name}[/]{marker}  {user_part}{cfg.hostname}")
-        if cfg.working_dir:
-            console.print(f"    [dim]dir: {cfg.working_dir}[/]")
 
 
 # -- Entry point --
