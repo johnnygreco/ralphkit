@@ -164,7 +164,7 @@ def runs(state_dir: StateDirOpt = None) -> None:
 
 
 def _build_ralph_args(
-    task: str,
+    task: str | None,
     config: Path | None,
     max_iterations: int | None,
     default_model: str | None,
@@ -173,7 +173,7 @@ def _build_ralph_args(
     remote: bool = False,
 ) -> list[str]:
     """Build argument list for ralph run."""
-    args = [task]
+    args = [task] if task else []
     if config:
         args += ["--config", str(config) if remote else str(config.resolve())]
     if max_iterations is not None:
@@ -213,7 +213,10 @@ def _do_attach(job_id: str, host: str | None) -> None:
 
 @app.command()
 def submit(
-    task: Annotated[str, typer.Argument(help="Task description")],
+    task: Annotated[
+        Optional[str],
+        typer.Argument(help="Task description (string or path to .md file)"),
+    ] = None,
     config: ConfigOpt = None,
     max_iterations: MaxIterOpt = None,
     default_model: ModelOpt = None,
@@ -235,7 +238,7 @@ def submit(
     """Submit a task to run in the background (local tmux or remote)."""
     from ralphkit.jobs import make_job_id
 
-    job_id = make_job_id(task)
+    job_id = make_job_id(task or "job")
     ralph_args = _build_ralph_args(
         task, config, max_iterations, default_model, state_dir, remote=bool(host)
     )
