@@ -46,8 +46,9 @@ def test_submit_job_full_flow(mock_run):
     # SSH args are ["ssh", "-o", "ConnectTimeout=10", host, cmd] so cmd is at index 4
     # Pre-flight: tmux check
     assert "command -v tmux" in calls[0][0][0][4]
-    # Upload script (no working dir = skip dir check)
+    # Upload script (includes mkdir -p)
     assert "mkdir -p" in calls[1][0][0][4]
+    assert "cat >" in calls[1][0][0][4]
     # Launch tmux
     assert "tmux new-session" in calls[2][0][0][4]
     assert "remain-on-exit" in calls[2][0][0][4]
@@ -75,9 +76,35 @@ def test_submit_job_with_ralph_version(mock_run):
 
     calls = mock_run.call_args_list
     # The uploaded script should contain uvx --from ralphkit==0.5.0
+    # calls[0]=tmux check, calls[1]=upload script (includes mkdir)
     upload_call = calls[1]
     script_content = upload_call[1]["input"]
     assert "uvx --from ralphkit==0.5.0 ralph" in script_content
+
+
+@patch("ralphkit.remote.subprocess.run")
+def test_submit_job_with_config_content(mock_run):
+    mock_run.return_value = _OK
+    submit_job(
+        "dev.example.com",
+        "rk-abc123",
+        ["do stuff"],
+        config_content="max_iterations: 3\nloop:\n  - step_name: w\n",
+    )
+
+    calls = mock_run.call_args_list
+    # calls: tmux check, config upload (with mkdir), script upload (with mkdir), tmux launch
+    assert len(calls) == 4
+    # Config upload
+    config_call = calls[1]
+    assert "rk-abc123.config.yaml" in config_call[0][0][4]
+    assert "mkdir -p" in config_call[0][0][4]
+    assert config_call[1]["input"] == "max_iterations: 3\nloop:\n  - step_name: w\n"
+    # Script should reference the config path
+    script_call = calls[2]
+    script_content = script_call[1]["input"]
+    assert "--config" in script_content
+    assert "rk-abc123.config.yaml" in script_content
 
 
 @patch("ralphkit.remote.subprocess.run")

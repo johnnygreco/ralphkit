@@ -66,6 +66,7 @@ def submit_job(
     working_dir: str | None = None,
     ralph_version: str | None = None,
     allow_prerelease: bool = False,
+    config_content: str | None = None,
 ) -> None:
     """Submit a ralph job to a remote host via SSH + tmux."""
     # Pre-flight: tmux available?
@@ -83,6 +84,16 @@ def submit_job(
             raise SystemExit(
                 f"Working directory does not exist on '{host}': {working_dir}"
             )
+
+    # Upload config file if provided
+    if config_content is not None:
+        config_path = f"{LOGS_DIR_SHELL}/{job_id}.config.yaml"
+        _ssh_run(
+            host,
+            f"mkdir -p {LOGS_DIR_SHELL} && cat > {config_path}",
+            input=config_content,
+        )
+        ralph_args = ralph_args + ["--config", config_path]
 
     # Generate job script
     ralph_cmd = _ralph_cmd(ralph_args, ralph_version, allow_prerelease)

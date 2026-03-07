@@ -177,6 +177,31 @@ def test_submit_remote(mock_run):
     assert "dev.example.com" in result.output
 
 
+@patch("ralphkit.remote.subprocess.run")
+def test_submit_remote_resolves_task_file(mock_run, tmp_path):
+    """Task .md files are read locally and content is sent to remote."""
+    mock_run.return_value = __import__("subprocess").CompletedProcess(
+        args=[], returncode=0, stdout="", stderr=""
+    )
+    task_file = tmp_path / "task.md"
+    task_file.write_text("# Refactor auth\nDo the thing.")
+
+    result = runner.invoke(app, ["submit", str(task_file), "--host", "dev.example.com"])
+    assert result.exit_code == 0
+    # The uploaded script should contain the file content, not the file path
+    calls = mock_run.call_args_list
+    # Find the script upload call (has input= with script content)
+    script_content = None
+    for call in calls:
+        inp = call[1].get("input", "")
+        if inp and "ralph run" in inp:
+            script_content = inp
+            break
+    assert script_content is not None
+    assert "Refactor auth" in script_content
+    assert str(task_file) not in script_content
+
+
 # -- jobs command --
 
 
