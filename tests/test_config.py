@@ -1,6 +1,6 @@
 import pytest
 
-from ralphkit.cli import resolve_task
+from ralphkit.engine import resolve_task
 from ralphkit.config import (
     DEFAULT_MAX_ITERATIONS,
     DEFAULT_MODEL,
