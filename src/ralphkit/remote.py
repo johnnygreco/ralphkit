@@ -40,10 +40,18 @@ def _ssh_run(
         raise
 
 
-def _ralph_cmd(ralph_args: list[str], ralph_version: str | None = None) -> str:
+def _ralph_cmd(
+    ralph_args: list[str],
+    ralph_version: str | None = None,
+    allow_prerelease: bool = False,
+) -> str:
     """Build the uvx ralph command string."""
-    pkg = f"ralphkit=={ralph_version}" if ralph_version else "ralphkit"
-    return f"uvx --from {shlex.quote(pkg)} ralph run " + shlex.join(ralph_args)
+    pkg = f"ralphkit=={ralph_version}" if ralph_version else "ralphkit@latest"
+    parts = ["uvx", "--from", shlex.quote(pkg)]
+    if allow_prerelease:
+        parts += ["--prerelease", "allow"]
+    parts += ["ralph", "run"]
+    return " ".join(parts) + " " + shlex.join(ralph_args)
 
 
 def submit_job(
@@ -52,6 +60,7 @@ def submit_job(
     ralph_args: list[str],
     working_dir: str | None = None,
     ralph_version: str | None = None,
+    allow_prerelease: bool = False,
 ) -> None:
     """Submit a ralph job to a remote host via SSH + tmux."""
     # Pre-flight: tmux available?
@@ -71,7 +80,7 @@ def submit_job(
             )
 
     # Generate job script
-    ralph_cmd = _ralph_cmd(ralph_args, ralph_version)
+    ralph_cmd = _ralph_cmd(ralph_args, ralph_version, allow_prerelease)
     script = build_job_script(
         job_id,
         ralph_cmd,

@@ -19,12 +19,22 @@ _OK = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
 def test_ralph_cmd_default():
     cmd = _ralph_cmd(["--model", "opus", "do stuff"])
-    assert cmd == "uvx --from ralphkit ralph run --model opus 'do stuff'"
+    assert cmd == "uvx --from ralphkit@latest ralph run --model opus 'do stuff'"
 
 
 def test_ralph_cmd_with_version():
     cmd = _ralph_cmd(["do stuff"], ralph_version="0.5.0")
     assert cmd == "uvx --from ralphkit==0.5.0 ralph run 'do stuff'"
+
+
+def test_ralph_cmd_with_prerelease():
+    cmd = _ralph_cmd(["do stuff"], allow_prerelease=True)
+    assert cmd == "uvx --from ralphkit@latest --prerelease allow ralph run 'do stuff'"
+
+
+def test_ralph_cmd_with_version_and_prerelease():
+    cmd = _ralph_cmd(["do stuff"], ralph_version="0.6.0a1", allow_prerelease=True)
+    assert cmd == "uvx --from ralphkit==0.6.0a1 --prerelease allow ralph run 'do stuff'"
 
 
 @patch("ralphkit.remote.subprocess.run")
