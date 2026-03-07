@@ -404,6 +404,48 @@ cleanup:
 
 
 @patch("ralphkit.engine.run_claude")
+def test_foreground_cleanup_runs_on_max_iterations(mock_run, monkeypatch, tmp_path):
+    """Cleanup phase executes even when max_iterations is reached."""
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text(
+        """\
+max_iterations: 1
+default_model: opus
+loop:
+  - step_name: worker
+    task_prompt: "Work."
+    system_prompt: "System."
+cleanup:
+  - step_name: finalize
+    task_prompt: "Cleanup."
+    system_prompt: "Cleanup system."
+"""
+    )
+    monkeypatch.chdir(tmp_path)
+
+    state_dir = tmp_path / STATE_DIR / "current"
+    calls = []
+
+    def fake_claude(prompt, model, system_prompt):
+        calls.append(prompt)
+        if len(calls) == 1:
+            # Planner: 2 items, but only 1 iteration allowed
+            _write_plan(state_dir, _make_items(2))
+        elif "Work." in prompt:
+            # Worker: complete only item 1
+            _write_plan(state_dir, _make_items(2, done={1}))
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        run_foreground(task="do stuff", config_path=str(cfg), force=True)
+    assert exc_info.value.code == 1  # max iterations reached
+    # planner(1) + worker(1) + cleanup(1) = 3
+    assert len(calls) == 3
+    assert "Cleanup." in calls[2]
+
+
+@patch("ralphkit.engine.run_claude")
 def test_foreground_with_plan_path(mock_run, monkeypatch, tmp_path):
     """Providing --plan skips the planner and uses the given plan file."""
     cfg = tmp_path / "ralph.yaml"
