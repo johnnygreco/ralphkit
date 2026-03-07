@@ -43,7 +43,7 @@ def _run_phase(prompt: str, model: str, system_prompt: str) -> dict | None:
 def resolve_task(raw: str) -> str:
     """If the string ends with .md and the file exists, read it. Otherwise return as-is."""
     if raw.endswith(".md"):
-        p = Path(raw)
+        p = Path(raw).expanduser()
         try:
             return p.read_text()
         except (FileNotFoundError, OSError):

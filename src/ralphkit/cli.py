@@ -169,13 +169,11 @@ def _build_ralph_args(
     max_iterations: int | None,
     default_model: str | None,
     state_dir: str | None,
-    *,
-    remote: bool = False,
 ) -> list[str]:
     """Build argument list for ralph run."""
     args = [task] if task else []
     if config:
-        args += ["--config", str(config) if remote else str(config.resolve())]
+        args += ["--config", str(config.resolve())]
     if max_iterations is not None:
         args += ["--max-iterations", str(max_iterations)]
     if default_model:
@@ -242,11 +240,20 @@ def submit(
     ] = False,
 ) -> None:
     """Submit a task to run in the background (local tmux or remote)."""
+    from ralphkit.engine import resolve_task
     from ralphkit.jobs import make_job_id
 
-    job_id = make_job_id(task or "job")
+    # Resolve file paths locally — files won't exist on remote hosts
+    # or in different working directories
+    resolved_task = resolve_task(task) if task else None
+    job_id = make_job_id(resolved_task or "job")
+    config_content = config.read_text() if (host and config) else None
     ralph_args = _build_ralph_args(
-        task, config, max_iterations, default_model, state_dir, remote=bool(host)
+        resolved_task,
+        None if host else config,
+        max_iterations,
+        default_model,
+        state_dir,
     )
     ralph_args.append("--force")
 
@@ -260,6 +267,7 @@ def submit(
             working_dir=working_dir,
             ralph_version=ralph_version,
             allow_prerelease=allow_prerelease,
+            config_content=config_content,
         )
         _print_submit_info(job_id, host=host, working_dir=working_dir)
     else:
