@@ -1,4 +1,5 @@
 import shlex
+import shutil
 import subprocess
 
 from ralphkit.tmux import (
@@ -12,8 +13,7 @@ from ralphkit.tmux import (
 
 def _check_tmux() -> None:
     """Verify tmux is installed."""
-    result = subprocess.run(["which", "tmux"], capture_output=True)
-    if result.returncode != 0:
+    if not shutil.which("tmux"):
         raise SystemExit(
             "tmux is required for job submission.\n"
             "  Install: brew install tmux"
@@ -31,14 +31,11 @@ def submit_local(
     script_file = script_path_local(job_id)
     script_file.parent.mkdir(parents=True, exist_ok=True)
     script_file.write_text(script)
-    script_file.chmod(0o755)
+    script_file.chmod(0o700)
 
     subprocess.run(
-        ["tmux", "new-session", "-d", "-s", job_id, str(script_file)],
-        check=True,
-    )
-    subprocess.run(
-        ["tmux", "set-option", "-t", job_id, "remain-on-exit", "on"],
+        ["tmux", "new-session", "-d", "-s", job_id, str(script_file),
+         ";", "set-option", "-t", job_id, "remain-on-exit", "on"],
         check=True,
     )
 

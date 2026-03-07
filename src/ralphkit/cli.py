@@ -129,11 +129,13 @@ def _build_ralph_args(
     max_iterations: int | None,
     default_model: str | None,
     state_dir: str | None,
+    *,
+    remote: bool = False,
 ) -> list[str]:
     """Build argument list for ralph run."""
     args = [task]
     if config:
-        args += ["--config", str(config.resolve())]
+        args += ["--config", str(config) if remote else str(config.resolve())]
     if max_iterations is not None:
         args += ["--max-iterations", str(max_iterations)]
     if default_model:
@@ -190,7 +192,9 @@ def submit(
     from ralphkit.jobs import make_job_id
 
     job_id = make_job_id(task)
-    ralph_args = _build_ralph_args(task, config, max_iterations, default_model, state_dir)
+    ralph_args = _build_ralph_args(
+        task, config, max_iterations, default_model, state_dir, remote=bool(host)
+    )
     ralph_args.append("--force")
 
     if host:
@@ -198,7 +202,7 @@ def submit(
         from ralphkit.remote import submit_job
 
         host_cfg = resolve_host(host)
-        submit_job(host_cfg, job_id, ralph_args)
+        submit_job(host_cfg, job_id, ralph_args, working_dir=working_dir)
         _print_submit_info(
             job_id,
             host=host,

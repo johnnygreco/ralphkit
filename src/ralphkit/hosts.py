@@ -60,13 +60,19 @@ def load_hosts_config(path: Path | None = None) -> tuple[str | None, dict[str, H
                 f"[warning]Warning: host '{name}' has unknown keys: {', '.join(sorted(unknown_host))}[/]"
             )
 
+        env = cfg.get("env")
+        if env is not None:
+            if not isinstance(env, dict):
+                raise ValueError(f"Host '{name}' env must be a mapping of key: value")
+            env = {str(k): str(v) for k, v in env.items()}
+
         host_map[name] = HostConfig(
             name=name,
             hostname=cfg["hostname"],
             user=cfg.get("user"),
             working_dir=cfg.get("working_dir"),
             ralph_command=cfg.get("ralph_command", "ralph"),
-            env=cfg.get("env"),
+            env=env,
         )
 
     if default and default not in host_map:

@@ -1,3 +1,4 @@
+import re
 import shlex
 from pathlib import Path
 
@@ -26,12 +27,12 @@ def build_job_script(
     env: dict[str, str] | None = None,
 ) -> str:
     """Generate a bash script for a ralph job."""
-    log_file = f"{LOGS_DIR_SHELL}/{job_id}.log"
     lines = [
         "#!/usr/bin/env bash",
         "set -uo pipefail",
         "",
         f'LOG_DIR="{LOGS_DIR_SHELL}"',
+        f'LOG_FILE="$LOG_DIR/{job_id}.log"',
         'mkdir -p "$LOG_DIR"',
     ]
     if working_dir:
@@ -39,12 +40,14 @@ def build_job_script(
     if env:
         lines.append("")
         for k, v in env.items():
-            lines.append(f'export {k}="{v}"')
+            if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', k):
+                raise ValueError(f"Invalid environment variable name: {k!r}")
+            lines.append(f'export {k}={shlex.quote(str(v))}')
     lines += [
         "",
-        f"{ralph_cmd} 2>&1 | tee {shlex.quote(log_file)}",
+        f'{ralph_cmd} 2>&1 | tee "$LOG_FILE"',
         "RC=${PIPESTATUS[0]}",
-        f'echo "[ralphkit] exit=$RC" >> {shlex.quote(log_file)}',
+        'echo "[ralphkit] exit=$RC" >> "$LOG_FILE"',
         "exit $RC",
     ]
     return "\n".join(lines) + "\n"

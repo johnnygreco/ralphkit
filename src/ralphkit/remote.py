@@ -23,7 +23,7 @@ def _ssh_run(
     input: str | None = None,
 ) -> subprocess.CompletedProcess:
     """Run a command on the remote host via SSH."""
-    ssh_args = ["ssh", _ssh_target(host), cmd]
+    ssh_args = ["ssh", "-o", "ConnectTimeout=10", _ssh_target(host), cmd]
     try:
         return subprocess.run(
             ssh_args,
@@ -33,19 +33,27 @@ def _ssh_run(
             input=input,
         )
     except subprocess.CalledProcessError as e:
-        if "Connection refused" in (e.stderr or "") or e.returncode == 255:
-            raise SystemExit(
-                f"SSH connection to '{host.hostname}' failed.\n"
-                f"  Verify with: ssh {_ssh_target(host)}"
-            )
+        if e.returncode == 255:
+            detail = ""
+            if e.stderr and e.stderr.strip():
+                detail = e.stderr.strip().splitlines()[-1]
+            msg = f"SSH connection to '{host.hostname}' failed."
+            if detail:
+                msg += f"\n  {detail}"
+            msg += f"\n  Verify with: ssh {_ssh_target(host)}"
+            raise SystemExit(msg)
         raise
 
 
 def submit_job(
-    host: HostConfig, job_id: str, ralph_args: list[str]
+    host: HostConfig,
+    job_id: str,
+    ralph_args: list[str],
+    working_dir: str | None = None,
 ) -> None:
     """Submit a ralph job to a remote host via SSH + tmux."""
     target = _ssh_target(host)
+    wd = working_dir or host.working_dir
 
     # Pre-flight: tmux available?
     result = _ssh_run(host, "command -v tmux", check=False)
@@ -56,21 +64,20 @@ def submit_job(
         )
 
     # Pre-flight: working dir exists?
-    if host.working_dir:
+    if wd:
         result = _ssh_run(
-            host, f"test -d {shlex.quote(host.working_dir)}", check=False
+            host, f"test -d {shlex.quote(wd)}", check=False
         )
         if result.returncode != 0:
             raise SystemExit(
-                f"Working directory does not exist on '{host.hostname}': "
-                f"{host.working_dir}"
+                f"Working directory does not exist on '{host.hostname}': {wd}"
             )
 
     # Generate job script
     ralph_cmd = shlex.quote(host.ralph_command) + " run " + shlex.join(ralph_args)
     script = build_job_script(
         job_id, ralph_cmd,
-        working_dir=host.working_dir,
+        working_dir=wd,
         env=host.env,
     )
 
@@ -83,8 +90,10 @@ def submit_job(
     )
 
     # Launch in tmux
-    _ssh_run(host, f"tmux new-session -d -s {job_id} {script_path}")
-    _ssh_run(host, f"tmux set-option -t {job_id} remain-on-exit on")
+    _ssh_run(
+        host,
+        f"tmux new-session -d -s {job_id} {script_path} \\; set-option -t {job_id} remain-on-exit on",
+    )
 
 
 def list_jobs(host: HostConfig) -> list[dict]:
@@ -102,7 +111,8 @@ def tail_logs(host: HostConfig, job_id: str, follow: bool = False) -> None:
     log_file = f"{LOGS_DIR_SHELL}/{job_id}.log"
     flag = "-f" if follow else "-100"
     subprocess.run(
-        ["ssh", "-t", _ssh_target(host), f"tail {flag} {shlex.quote(log_file)}"],
+        ["ssh", "-t", "-o", "ConnectTimeout=10", _ssh_target(host),
+         f'tail {flag} "{log_file}"'],
     )
 
 
