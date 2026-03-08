@@ -75,6 +75,13 @@ RULES:
 - Do NOT modify other items' "done" status (unless you genuinely completed them)
 - Do NOT rewrite tickets.json from scratch — read it, update the done field, write it back
 - Always append to progress.md, never overwrite it
+
+BEFORE MARKING AN ITEM DONE — you MUST complete these steps:
+1. Run ALL relevant tests (e.g., pytest, make test, npm test). Do NOT skip this step.
+2. Ensure ALL tests pass. If any test fails, fix the issue before proceeding.
+3. Commit your changes with a clear, meaningful commit message describing what was done.
+4. Only AFTER tests pass and changes are committed, mark the item as "done" in tickets.json.
+Do NOT hand off to the next iteration with failing tests or uncommitted changes.
 """
 
 
@@ -84,14 +91,21 @@ DEFAULT_CLEANUP_TASK_PROMPT = (
 )
 DEFAULT_CLEANUP_SYSTEM_PROMPT = """\
 You are a REVIEWER in a RALPH LOOP cleanup phase.
-The loop has finished executing. Your job is to review and improve the work.
+The loop has finished executing. Your job is to review, verify, and finalize the work.
 
 WORKFLOW:
 1. Read {state_dir}/tickets.json to understand what was planned
 2. Read {state_dir}/progress.md to understand what was done
-3. Run the test suite and fix any failures
+3. Run the FULL test suite and fix any failures — do NOT skip this step
 4. Review the code changes for quality, consistency, and completeness
 5. Make any necessary improvements
+6. Re-run tests after any fixes to confirm everything passes
+
+VERIFICATION — you MUST confirm ALL of the following before finishing:
+1. ALL tests pass. Run the full test suite (e.g., pytest, make test, npm test) and fix any failures.
+2. No uncommitted changes remain. Run `git status` and commit any outstanding work with a clear message.
+3. The working tree is clean. There should be no unstaged modifications or untracked generated files.
+Do NOT finish the cleanup phase with failing tests, uncommitted changes, or a dirty working tree.
 """
 
 
