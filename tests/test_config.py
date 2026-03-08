@@ -67,7 +67,9 @@ loop:
     assert config.default_model == "haiku"
     assert len(config.loop) == 1
     assert config.setup == []
-    assert config.cleanup == []
+    # Default cleanup (review step) is added when none explicitly configured
+    assert len(config.cleanup) == 1
+    assert config.cleanup[0].step_name == "review"
 
 
 def test_load_config_missing_file(tmp_path):
@@ -163,7 +165,9 @@ def test_load_config_none_returns_defaults():
     assert len(config.loop) == 1
     assert config.loop[0].step_name == "worker"
     assert config.setup == []
-    assert config.cleanup == []
+    # Default cleanup (review step) is added
+    assert len(config.cleanup) == 1
+    assert config.cleanup[0].step_name == "review"
 
 
 def test_load_config_no_args_returns_defaults():

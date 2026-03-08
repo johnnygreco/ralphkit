@@ -17,7 +17,7 @@ def test_write_and_read_task(tmp_path):
 def test_write_and_read_iteration(tmp_path):
     state = StateDir(tmp_path)
     state.write_iteration(3)
-    assert (tmp_path / "iteration.md").read_text() == "3"
+    assert (tmp_path / "iteration.txt").read_text() == "3"
 
 
 def test_read_missing_returns_none(tmp_path):
@@ -29,13 +29,13 @@ def test_read_missing_returns_none(tmp_path):
 def test_clean_for_next_iteration(tmp_path):
     state = StateDir(tmp_path)
     (tmp_path / "RALPH-BLOCKED.md").write_text("blocked")
-    (tmp_path / "plan.json").write_text('{"items": []}')
+    (tmp_path / "tickets.json").write_text('{"items": []}')
     (tmp_path / "progress.md").write_text("iteration 1 notes")
     state.clean_for_next_iteration()
     # RALPH-BLOCKED.md should be removed
     assert not (tmp_path / "RALPH-BLOCKED.md").exists()
-    # plan.json and progress.md should be preserved
-    assert (tmp_path / "plan.json").read_text() == '{"items": []}'
+    # tickets.json and progress.md should be preserved
+    assert (tmp_path / "tickets.json").read_text() == '{"items": []}'
     assert (tmp_path / "progress.md").read_text() == "iteration 1 notes"
 
 
@@ -86,13 +86,13 @@ def test_read_plan_missing_returns_none(tmp_path):
 
 def test_read_plan_invalid_json_returns_none(tmp_path):
     state = StateDir(tmp_path)
-    (tmp_path / "plan.json").write_text("not valid json {{{")
+    (tmp_path / "tickets.json").write_text("not valid json {{{")
     assert state.read_plan() is None
 
 
 def test_copy_plan(tmp_path):
     state = StateDir(tmp_path)
-    source = tmp_path / "external_plan.json"
+    source = tmp_path / "external_tickets.json"
     plan = {"goal": "Test", "items": [{"id": 1, "title": "A", "done": False}]}
     source.write_text(json.dumps(plan))
     state.copy_plan(source)
@@ -295,10 +295,10 @@ def test_state_isolation_between_runs(tmp_path):
 
     # Run 001 data is untouched
     assert (root / "runs" / "001" / "task.md").read_text() == "task one"
-    assert (root / "runs" / "001" / "plan.json").exists()
+    assert (root / "runs" / "001" / "tickets.json").exists()
     # Run 002 has its own data
     assert (root / "runs" / "002" / "task.md").read_text() == "task two"
-    assert not (root / "runs" / "002" / "plan.json").exists()
+    assert not (root / "runs" / "002" / "tickets.json").exists()
     # Only two run directories
     runs = sorted(d.name for d in (root / "runs").iterdir() if d.is_dir())
     assert runs == ["001", "002"]
@@ -321,6 +321,6 @@ def test_symlink_and_run_dir_are_consistent(tmp_path):
 
     # Write plan through the symlink
     plan = {"goal": "Test", "items": [{"id": 1, "title": "A", "done": False}]}
-    (root / "current" / "plan.json").write_text(json.dumps(plan))
+    (root / "current" / "tickets.json").write_text(json.dumps(plan))
     # Read through the real run dir path
     assert state.read_plan() == plan

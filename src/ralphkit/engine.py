@@ -118,9 +118,9 @@ def _resolve_handoff(
 def _validate_plan(plan: dict | None) -> str | None:
     """Validate a plan dict. Returns error message or None if valid."""
     if plan is None:
-        return "no valid plan.json produced"
+        return "no valid tickets.json produced"
     if not isinstance(plan, dict):
-        return "plan.json is not a JSON object"
+        return "tickets.json is not a JSON object"
     items = plan.get("items")
     if not isinstance(items, list) or len(items) == 0:
         return "Plan has no items"
@@ -189,11 +189,8 @@ def run_foreground(
     console.print()
     print_banner(f"RALPH {'PIPE' if is_pipe else 'LOOP'}")
     console.print()
-    if task_content is not None:
-        first_line = task_content.split("\n", 1)[0]
-        print_kv("Task", first_line)
+    print_kv("Dir", str(Path.cwd()))
     print_kv("Run", f"#{state.path.name}")
-    print_kv("Model", config.default_model)
     if is_pipe:
         print_kv("Steps", str(len(config.pipe)))
         print_kv("Pipe", _step_names(config.pipe))
@@ -415,10 +412,10 @@ def run_foreground(
 
     # --plan-only: exit after showing the plan
     if plan_only:
-        console.print(f"  Plan written to {state.path / 'plan.json'}")
         # Ensure plan is written if provided via --plan
-        if not (state.path / "plan.json").exists():
+        if not (state.path / "tickets.json").exists():
             state.write_plan(plan)
+        console.print(f"  Plan written to {state.path / 'tickets.json'}")
         sys.exit(0)
 
     # -- LOOP phase (with cleanup in finally) --
@@ -462,7 +459,7 @@ def run_foreground(
             plan = state.read_plan()
             if plan is None:
                 report.outcome = "ERROR"
-                print_error("Worker corrupted plan.json (invalid JSON).")
+                print_error("Worker corrupted tickets.json (invalid JSON).")
                 sys.exit(1)
 
             plan_items = plan.get("items", [])

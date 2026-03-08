@@ -81,13 +81,10 @@ def print_plan_summary(plan: dict) -> None:
     )
     table.add_column("#", justify="right", style="bold")
     table.add_column("Item")
-    table.add_column("Done", justify="center")
     for item in items:
-        done_icon = "\u2611" if item.get("done", False) else "\u2610"
         table.add_row(
             str(item.get("id", "")),
             item.get("title", ""),
-            done_icon,
         )
     console.print(table)
 

@@ -90,7 +90,9 @@ def run(
     ] = False,
     plan: Annotated[
         Optional[Path],
-        typer.Option("--plan", help="Path to pre-made plan.json (skips planning step)"),
+        typer.Option(
+            "--plan", help="Path to pre-made tickets.json (skips planning step)"
+        ),
     ] = None,
     plan_only: Annotated[
         bool,
@@ -139,7 +141,7 @@ def runs(state_dir: StateDirOpt = None) -> None:
                 first_line = task_file.read_text().split("\n", 1)[0]
 
             plan_info = ""
-            plan_path = run_dir / "plan.json"
+            plan_path = run_dir / "tickets.json"
             if plan_path.is_file():
                 try:
                     plan_data = json.loads(plan_path.read_text())

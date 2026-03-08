@@ -44,8 +44,8 @@ ralph "Add unit tests for the auth module"
 # Generate plan only — review/edit before committing to a full run
 ralph "Add unit tests for the auth module" --plan-only
 
-# Skip planning — provide your own plan.json
-ralph "Add unit tests for the auth module" --plan my-plan.json
+# Skip planning — provide your own tickets.json
+ralph "Add unit tests for the auth module" --plan my-tickets.json
 
 # With a custom config
 ralph "Refactor the database layer" --config configs/example.yaml
@@ -77,7 +77,7 @@ The `run` subcommand is implicit — `ralph "your task"` is equivalent to `ralph
 | `--config PATH` / `-c` | Path to YAML config file | built-in loop defaults |
 | `--max-iterations N` | Override max iterations (loop only) | 10 |
 | `--default-model MODEL` | Override default model | opus |
-| `--plan PATH` | Path to pre-made plan.json (skips planning step) | — |
+| `--plan PATH` | Path to pre-made tickets.json (skips planning step) | — |
 | `--plan-only` | Generate plan and exit without running the loop | off |
 | `--plan-model MODEL` | Override model for the planning step | default model |
 | `--state-dir DIR` | Override state directory | .ralphkit |
@@ -92,8 +92,8 @@ ralph task.md --config ralph.yaml
 
 # Generate plan only, review it, then run
 ralph "Add auth" --plan-only -f
-# ... edit .ralphkit/runs/001/plan.json ...
-ralph "Add auth" --plan .ralphkit/runs/001/plan.json -f
+# ... edit .ralphkit/runs/001/tickets.json ...
+ralph "Add auth" --plan .ralphkit/runs/001/tickets.json -f
 
 # Use a cheaper model for planning
 ralph "Add auth" --plan-model sonnet
@@ -153,7 +153,7 @@ plan_model: sonnet    # optional: cheaper model for planning step
 # Overrides the built-in worker loop
 loop:
   - step_name: worker
-    task_prompt: "Read {state_dir}/plan.json, find the next incomplete item, and implement it."
+    task_prompt: "Read {state_dir}/tickets.json, find the next incomplete item, and implement it."
     system_prompt: |
       You are a WORKER in a RALPH LOOP...
       (see configs/example.yaml for the full prompt)
@@ -247,17 +247,17 @@ See [`configs/example.yaml`](configs/example.yaml) and [`configs/example-pipe.ya
 ### Loop
 
 ```
-Setup (once)         Planning          Loop (iterate)           Cleanup (once)
-┌──────────┐    ┌──────────────┐    ┌───────────────────────┐    ┌──────────────┐
-│ step 1   │    │ planner      │    │ Read plan.json        │    │ step 1       │
-│ step 2   │    │ → plan.json  │    │ Work on next item     │    │ ...          │
-│ ...      │    └──────────────┘    │ Update plan.json      │    └──────────────┘
-└──────────┘                        │ All done? → COMPLETE  │
-                                    │ More items? → loop    │
-                                    └───────────────────────┘
+   Setup             Planning                 Loop (iterate)               Cleanup
+┌──────────┐    ┌─────────────────┐    ┌──────────────────────────┐    ┌──────────────┐
+│ step 1   │    │ planner         │    │ Read tickets.json        │    │ step 1       │
+│ step 2   │    │ → tickets.json  │    │ Work on next item        │    │ ...          │
+│ ...      │    └─────────────────┘    │ Update tickets.json      │    └──────────────┘
+└──────────┘                           │ All done? → COMPLETE     │
+                                       │ More items? → loop       │
+                                       └──────────────────────────┘
 ```
 
-The planner agent reads the task and breaks it into discrete items in `plan.json`. Each loop iteration works on exactly one item, marks it done, and appends learnings to `progress.md`. The loop completes when all items are done. The cleanup phase runs after the loop exits regardless of outcome, like a `finally` block.
+The planner agent reads the task and breaks it into discrete items in `tickets.json`. Each loop iteration works on exactly one item, marks it done, and appends learnings to `progress.md`. The loop completes when all items are done. The cleanup phase runs after the loop exits regardless of outcome, like a `finally` block.
 
 ### Pipe
 
@@ -351,7 +351,7 @@ Each run gets its own numbered directory under `.ralphkit/runs/`. A `current` sy
   current -> runs/003        # symlink to active run
   runs/
     001/                     # first run (preserved)
-      task.md, plan.json, progress.md, report.json, ...
+      task.md, tickets.json, progress.md, report.json, ...
     002/                     # second run (preserved)
     003/                     # active run
 ```
@@ -363,9 +363,9 @@ Loop state files:
 | File | Purpose |
 |------|---------|
 | `task.md` | The task description |
-| `plan.json` | Structured plan: goal + items with done status |
+| `tickets.json` | Structured plan: goal + items with done status |
 | `progress.md` | Append-only log of iteration learnings |
-| `iteration.md` | Current iteration number |
+| `iteration.txt` | Current iteration number |
 | `RALPH-BLOCKED.md` | Created if a step cannot proceed |
 | `report.json` | Run report with timing and token usage |
 
