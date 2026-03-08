@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -193,22 +192,16 @@ def _print_submit_info(
     host_flag = f" --host {host}" if host else ""
     console.print()
     console.print(f"  [success]Submitted[/] {job_id}")
-    console.print(f"  [dim]Host:[/]    {host or 'localhost'}")
+    console.print(f"  [dim]Host:[/]      {host or 'localhost'}")
     if working_dir:
-        console.print(f"  [dim]Dir:[/]     {working_dir}")
-    console.print(f"  [dim]Attach:[/]  ralph attach {job_id}{host_flag}")
-    console.print(f"  [dim]Logs:[/]    ralph logs {job_id}{host_flag}")
-    console.print()
-
-
-def _do_attach(job_id: str, host: str | None) -> None:
+        console.print(f"  [dim]Dir:[/]       {working_dir}")
+    console.print(f"  [dim]Session:[/]   {job_id}")
     if host:
-        from ralphkit.remote import get_attach_command
-
-        cmd = get_attach_command(host, job_id)
+        console.print(f"  [dim]Attach:[/]    ssh -t {host} tmux attach -t {job_id}")
     else:
-        cmd = ["tmux", "attach", "-t", job_id]
-    os.execvp(cmd[0], cmd)
+        console.print(f"  [dim]Attach:[/]    tmux attach -t {job_id}")
+    console.print(f"  [dim]Logs:[/]      ralph logs {job_id}{host_flag}")
+    console.print()
 
 
 @app.command()
@@ -222,9 +215,6 @@ def submit(
     default_model: ModelOpt = None,
     state_dir: StateDirOpt = None,
     host: HostOpt = None,
-    attach: Annotated[
-        bool, typer.Option("--attach", help="Attach to tmux session after submit")
-    ] = False,
     working_dir: Annotated[
         Optional[str], typer.Option("--working-dir", help="Working directory for job")
     ] = None,
@@ -234,12 +224,6 @@ def submit(
             "--ralph-version", help="ralphkit version for remote (default: latest)"
         ),
     ] = None,
-    allow_prerelease: Annotated[
-        bool,
-        typer.Option(
-            "--allow-prerelease", help="Allow prerelease versions for remote uvx"
-        ),
-    ] = False,
 ) -> None:
     """Submit a task to run in the background (local tmux or remote)."""
     from ralphkit.engine import resolve_task
@@ -268,7 +252,6 @@ def submit(
             ralph_args,
             working_dir=working_dir,
             ralph_version=ralph_version,
-            allow_prerelease=allow_prerelease,
             config_content=config_content,
         )
         _print_submit_info(job_id, host=host, working_dir=working_dir)
@@ -277,9 +260,6 @@ def submit(
 
         submit_local(job_id, ralph_args, working_dir)
         _print_submit_info(job_id, host=None, working_dir=working_dir)
-
-    if attach:
-        _do_attach(job_id, host)
 
 
 # -- jobs command --
@@ -347,18 +327,6 @@ def cancel(
         cancel_local(job_id)
 
     console.print(f"  [success]Cancelled[/] {job_id}")
-
-
-# -- attach command --
-
-
-@app.command()
-def attach(
-    job_id: Annotated[str, typer.Argument(help="Job ID")],
-    host: HostOpt = None,
-) -> None:
-    """Attach to a job's tmux session."""
-    _do_attach(job_id, host)
 
 
 # -- Entry point --

@@ -40,7 +40,6 @@ def test_help_shows_commands():
     assert "jobs" in result.output
     assert "logs" in result.output
     assert "cancel" in result.output
-    assert "attach" in result.output
 
 
 def test_runs_command_not_confused_with_run():

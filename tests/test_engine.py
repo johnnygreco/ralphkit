@@ -659,8 +659,8 @@ def test_foreground_two_invocations_create_two_runs(mock_run, monkeypatch, tmp_p
 
 
 @patch("ralphkit.engine.run_claude")
-def test_foreground_prompts_use_symlink_path(mock_run, monkeypatch, tmp_path):
-    """Prompt templates receive the 'current' symlink as state_dir."""
+def test_foreground_prompts_use_real_run_path(mock_run, monkeypatch, tmp_path):
+    """Prompt templates receive the real run dir, not the 'current' symlink."""
     cfg = tmp_path / "ralph.yaml"
     cfg.write_text(
         """\
@@ -691,9 +691,8 @@ loop:
     with pytest.raises(SystemExit):
         run_foreground(task="do stuff", config_path=str(cfg), force=True)
 
-    expected_suffix = str(Path(STATE_DIR) / "current")
-    assert any(expected_suffix in p for p in captured_prompts)
-    assert not any("runs/001" in p for p in captured_prompts)
+    assert any("runs/001" in p for p in captured_prompts)
+    assert not any(str(Path(STATE_DIR) / "current") in p for p in captured_prompts)
 
 
 # -- Pipe tests --

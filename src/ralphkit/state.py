@@ -21,8 +21,8 @@ class StateDir:
 
     @property
     def active_path(self) -> Path:
-        """Path that prompt templates should use (the 'current' symlink)."""
-        return self._current_link
+        """Path that prompt templates should use (the real run directory)."""
+        return self.path
 
     def _numeric_run_dirs(self) -> list[Path]:
         """Return all numbered run directories in sorted order."""
