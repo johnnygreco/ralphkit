@@ -150,11 +150,11 @@ def test_current_symlink_points_to_latest(tmp_path):
     assert link.resolve() == state2.path.resolve()
 
 
-def test_active_path_returns_current_link(tmp_path):
+def test_active_path_returns_real_run_dir(tmp_path):
     root = tmp_path / "state"
     state = StateDir(root)
     state.setup()
-    assert state.active_path == root / "current"
+    assert state.active_path == root / "runs" / "001"
 
 
 def test_list_runs_returns_ordered(tmp_path):
