@@ -57,4 +57,5 @@ src/ralphkit/_version.py
 # project
 .scratch/
 notes/
+plans/
 
