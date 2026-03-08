@@ -78,7 +78,7 @@ class StateDir:
         (self.path / "task.md").write_text(content)
 
     def write_iteration(self, n: int) -> None:
-        (self.path / "iteration.md").write_text(str(n))
+        (self.path / "iteration.txt").write_text(str(n))
 
     def _read(self, name: str) -> str | None:
         try:
@@ -96,8 +96,8 @@ class StateDir:
     # ── Plan management ───────────────────────────────────────────
 
     def read_plan(self) -> dict | None:
-        """Read and parse plan.json. Returns None if missing or invalid JSON."""
-        raw = self._read("plan.json")
+        """Read and parse tickets.json. Returns None if missing or invalid JSON."""
+        raw = self._read("tickets.json")
         if raw is None:
             return None
         try:
@@ -106,9 +106,9 @@ class StateDir:
             return None
 
     def write_plan(self, data: dict) -> None:
-        """Write dict as JSON to plan.json."""
-        (self.path / "plan.json").write_text(json.dumps(data, indent=2) + "\n")
+        """Write dict as JSON to tickets.json."""
+        (self.path / "tickets.json").write_text(json.dumps(data, indent=2) + "\n")
 
     def copy_plan(self, source: Path) -> None:
-        """Copy an external file into the state dir as plan.json."""
-        shutil.copy2(source, self.path / "plan.json")
+        """Copy an external file into the state dir as tickets.json."""
+        shutil.copy2(source, self.path / "tickets.json")

@@ -4,28 +4,28 @@ plan_model: sonnet    # optional: cheaper model for planning
 
 loop:
   - step_name: worker
-    task_prompt: "Read {state_dir}/plan.json, find the next incomplete item, and implement it. This is iteration {iteration} of {max_iterations}."
+    task_prompt: "Read {state_dir}/tickets.json, find the next incomplete item, and implement it. This is iteration {iteration} of {max_iterations}."
     system_prompt: |
       You are a WORKER in a RALPH LOOP — a plan-driven iteration cycle.
       Your work persists through FILES ONLY. You will NOT remember previous iterations.
 
       WORKFLOW:
-      1. Read {state_dir}/plan.json — find the FIRST item where "done" is false
+      1. Read {state_dir}/tickets.json — find the FIRST item where "done" is false
       2. Read {state_dir}/progress.md if it exists — learn from prior iterations
       3. Implement ONLY that one item. Do NOT work on other items.
       4. Run tests and verification if applicable
-      5. When done, update {state_dir}/plan.json — set that item's "done" to true
+      5. When done, update {state_dir}/tickets.json — set that item's "done" to true
       6. Append to {state_dir}/progress.md with what you did and any learnings
 
       STATE FILES (in {state_dir}/):
-      - plan.json — The structured plan (read and update this)
+      - tickets.json — The structured plan (read and update this)
       - progress.md — Append-only log of what happened each iteration
       - task.md — The original task description (for reference)
-      - iteration.md — Current iteration number
+      - iteration.txt — Current iteration number
       - RALPH-BLOCKED.md — Create this if you cannot proceed (explain why)
 
       RULES:
       - Work on exactly ONE item per iteration
       - Do NOT modify other items' "done" status (unless you genuinely completed them)
-      - Do NOT rewrite plan.json from scratch — read it, update the done field, write it back
+      - Do NOT rewrite tickets.json from scratch — read it, update the done field, write it back
       - Always append to progress.md, never overwrite it

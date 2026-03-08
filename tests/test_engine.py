@@ -45,9 +45,9 @@ loop:
 
 
 def _write_plan(state_dir, items, goal="test goal"):
-    """Write a plan.json to the state directory."""
+    """Write a tickets.json to the state directory."""
     plan = {"goal": goal, "items": items}
-    (state_dir / "plan.json").write_text(json.dumps(plan, indent=2))
+    (state_dir / "tickets.json").write_text(json.dumps(plan, indent=2))
 
 
 def _make_items(n, done=None):
@@ -262,8 +262,8 @@ def test_foreground_two_iterations_then_complete(mock_run, monkeypatch, tmp_path
     with pytest.raises(SystemExit) as exc_info:
         run_foreground(task="do stuff", config_path=str(cfg), force=True)
     assert exc_info.value.code == 0
-    # 1 planner + 2 worker calls
-    assert call_count["n"] == 3
+    # 1 planner + 2 worker + 1 cleanup (review) calls
+    assert call_count["n"] == 4
 
 
 @patch("ralphkit.engine.run_claude")
@@ -306,7 +306,7 @@ loop:
 
 @patch("ralphkit.engine.run_claude")
 def test_foreground_worker_corrupts_plan_exits(mock_run, monkeypatch, tmp_path):
-    """Worker corrupting plan.json (invalid JSON) -> exit 1."""
+    """Worker corrupting tickets.json (invalid JSON) -> exit 1."""
     cfg = tmp_path / "ralph.yaml"
     cfg.write_text(_minimal_config_yaml())
     monkeypatch.chdir(tmp_path)
@@ -319,8 +319,8 @@ def test_foreground_worker_corrupts_plan_exits(mock_run, monkeypatch, tmp_path):
         if call_count["n"] == 1:
             _write_plan(state_dir, _make_items(1))
         else:
-            # Worker corrupts plan.json
-            (state_dir / "plan.json").write_text("not json{{{")
+            # Worker corrupts tickets.json
+            (state_dir / "tickets.json").write_text("not json{{{")
 
     mock_run.side_effect = fake_claude
 
@@ -452,7 +452,7 @@ def test_foreground_with_plan_path(mock_run, monkeypatch, tmp_path):
     cfg.write_text(_minimal_config_yaml())
     monkeypatch.chdir(tmp_path)
 
-    plan_file = tmp_path / "my-plan.json"
+    plan_file = tmp_path / "my-tickets.json"
     plan_file.write_text(json.dumps({"goal": "test", "items": _make_items(1)}))
 
     state_dir = tmp_path / STATE_DIR / "current"
@@ -471,8 +471,8 @@ def test_foreground_with_plan_path(mock_run, monkeypatch, tmp_path):
             plan_path=str(plan_file),
         )
     assert exc_info.value.code == 0
-    # Only 1 call (worker), no planner
-    mock_run.assert_called_once()
+    # 1 worker + 1 cleanup (review), no planner
+    assert mock_run.call_count == 2
 
 
 @patch("ralphkit.engine.run_claude")

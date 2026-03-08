@@ -128,7 +128,7 @@ def test_run_no_task_for_pipe_mode(mock_fg):
 @patch("ralphkit.engine.run_foreground")
 def test_run_plan_flags_forwarded(mock_fg, tmp_path):
     """--plan, --plan-only, --plan-model are forwarded."""
-    plan_file = tmp_path / "plan.json"
+    plan_file = tmp_path / "tickets.json"
     plan_file.write_text('{"items": []}')
     mock_fg.side_effect = SystemExit(0)
 

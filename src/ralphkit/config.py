@@ -10,7 +10,7 @@ DEFAULT_MODEL = "opus"
 
 DEFAULT_PLANNER_TASK_PROMPT = (
     "Read {state_dir}/task.md and create a structured plan. "
-    "Write the plan to {state_dir}/plan.json."
+    "Write the plan to {state_dir}/tickets.json."
 )
 DEFAULT_PLANNER_SYSTEM_PROMPT = """\
 You are a PLANNER in a RALPH LOOP.
@@ -20,7 +20,7 @@ Read {state_dir}/task.md and break the task into 3-8 discrete, ordered items.
 Each item should be completable in a single agent session.
 Order items by dependency — earlier items should not depend on later ones.
 
-Write {state_dir}/plan.json with this EXACT structure:
+Write {state_dir}/tickets.json with this EXACT structure:
 {{
   "goal": "Brief summary of the overall task",
   "items": [
@@ -39,11 +39,16 @@ RULES:
 - All items start with "done": false
 - Keep titles short (under 60 characters)
 - Keep details actionable and specific
-- Do NOT write any code or make any changes beyond writing plan.json
+- Do NOT write any code or make any changes beyond writing tickets.json
+
+PARALLELISM:
+- If an item involves multiple independent sub-tasks (e.g., updating several unrelated files),
+  note in the details that the agent should "Launch a team of agents" to work in parallel.
+- Only suggest parallelism when sub-tasks are truly independent with no shared state.
 """
 
 DEFAULT_WORKER_TASK_PROMPT = (
-    "Read {state_dir}/plan.json, find the next incomplete item, and implement it. "
+    "Read {state_dir}/tickets.json, find the next incomplete item, and implement it. "
     "This is iteration {iteration} of {max_iterations}."
 )
 DEFAULT_WORKER_SYSTEM_PROMPT = """\
@@ -51,26 +56,53 @@ You are a WORKER in a RALPH LOOP — a plan-driven iteration cycle.
 Your work persists through FILES ONLY. You will NOT remember previous iterations.
 
 WORKFLOW:
-1. Read {state_dir}/plan.json — find the FIRST item where "done" is false
+1. Read {state_dir}/tickets.json — find the FIRST item where "done" is false
 2. Read {state_dir}/progress.md if it exists — learn from prior iterations
 3. Implement ONLY that one item. Do NOT work on other items.
 4. Run tests and verification if applicable
-5. When done, update {state_dir}/plan.json — set that item's "done" to true
+5. When done, update {state_dir}/tickets.json — set that item's "done" to true
 6. Append to {state_dir}/progress.md with what you did and any learnings
 
 STATE FILES (in {state_dir}/):
-- plan.json — The structured plan (read and update this)
+- tickets.json — The structured plan (read and update this)
 - progress.md — Append-only log of what happened each iteration
 - task.md — The original task description (for reference)
-- iteration.md — Current iteration number
+- iteration.txt — Current iteration number
 - RALPH-BLOCKED.md — Create this if you cannot proceed (explain why)
 
 RULES:
 - Work on exactly ONE item per iteration
 - Do NOT modify other items' "done" status (unless you genuinely completed them)
-- Do NOT rewrite plan.json from scratch — read it, update the done field, write it back
+- Do NOT rewrite tickets.json from scratch — read it, update the done field, write it back
 - Always append to progress.md, never overwrite it
 """
+
+
+DEFAULT_CLEANUP_TASK_PROMPT = (
+    "Review the work done in {state_dir}/tickets.json and {state_dir}/progress.md. "
+    "Run tests and fix any issues."
+)
+DEFAULT_CLEANUP_SYSTEM_PROMPT = """\
+You are a REVIEWER in a RALPH LOOP cleanup phase.
+The loop has finished executing. Your job is to review and improve the work.
+
+WORKFLOW:
+1. Read {state_dir}/tickets.json to understand what was planned
+2. Read {state_dir}/progress.md to understand what was done
+3. Run the test suite and fix any failures
+4. Review the code changes for quality, consistency, and completeness
+5. Make any necessary improvements
+"""
+
+
+def _default_cleanup() -> list["StepConfig"]:
+    return [
+        StepConfig(
+            step_name="review",
+            task_prompt=DEFAULT_CLEANUP_TASK_PROMPT,
+            system_prompt=DEFAULT_CLEANUP_SYSTEM_PROMPT,
+        ),
+    ]
 
 
 def _default_loop() -> list["StepConfig"]:
@@ -135,6 +167,7 @@ def load_config(path: str | Path | None = None) -> RalphConfig:
             default_model=DEFAULT_MODEL,
             state_dir=STATE_DIR,
             loop=_default_loop(),
+            cleanup=_default_cleanup(),
         )
 
     path = Path(path)
@@ -199,6 +232,8 @@ def load_config(path: str | Path | None = None) -> RalphConfig:
             loop_steps = _default_loop()
         setup_steps = _parse_steps(data.get("setup", []), "setup")
         cleanup_steps = _parse_steps(data.get("cleanup", []), "cleanup")
+        if "cleanup" not in data:
+            cleanup_steps = _default_cleanup()
 
     handoff_prompt = data.get("handoff_prompt")
 
