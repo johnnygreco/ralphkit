@@ -6,10 +6,10 @@ import pytest
 from ralphkit.remote import (
     _ssh_run,
     _ralph_cmd,
+    _is_prerelease,
     submit_job,
     list_jobs,
     cancel_job,
-    get_attach_command,
     tail_logs,
 )
 
@@ -29,20 +29,35 @@ def test_ralph_cmd_with_version():
     assert cmd == "uvx --refresh --from ralphkit==0.5.0 ralph run 'do stuff'"
 
 
-def test_ralph_cmd_with_prerelease():
-    cmd = _ralph_cmd(["do stuff"], allow_prerelease=True)
-    assert (
-        cmd
-        == "uvx --refresh --from ralphkit@latest --prerelease allow ralph run 'do stuff'"
-    )
-
-
-def test_ralph_cmd_with_version_and_prerelease():
-    cmd = _ralph_cmd(["do stuff"], ralph_version="0.6.0a1", allow_prerelease=True)
+def test_ralph_cmd_auto_detects_prerelease():
+    cmd = _ralph_cmd(["do stuff"], ralph_version="0.6.0a1")
     assert (
         cmd
         == "uvx --refresh --from ralphkit==0.6.0a1 --prerelease allow ralph run 'do stuff'"
     )
+
+
+def test_ralph_cmd_no_prerelease_for_stable():
+    cmd = _ralph_cmd(["do stuff"], ralph_version="0.6.0")
+    assert cmd == "uvx --refresh --from ralphkit==0.6.0 ralph run 'do stuff'"
+
+
+@pytest.mark.parametrize(
+    "version,expected",
+    [
+        ("0.6.0a1", True),
+        ("0.6.0b2", True),
+        ("0.6.0rc1", True),
+        ("0.6.0dev1", True),
+        ("0.6.0alpha1", True),
+        ("0.6.0beta3", True),
+        ("0.6.0", False),
+        ("1.0.0", False),
+        ("1.2.3", False),
+    ],
+)
+def test_is_prerelease(version, expected):
+    assert _is_prerelease(version) == expected
 
 
 @patch("ralphkit.remote.subprocess.run")
@@ -171,19 +186,6 @@ def test_cancel_job_missing_raises_system_exit(mock_run):
     )
     with pytest.raises(SystemExit, match="No job 'rk-missing'"):
         cancel_job("dev.example.com", "rk-missing")
-
-
-def test_get_attach_command():
-    cmd = get_attach_command("dev.example.com", "rk-abc123")
-    assert cmd == [
-        "ssh",
-        "-t",
-        "dev.example.com",
-        "tmux",
-        "attach",
-        "-t",
-        "rk-abc123",
-    ]
 
 
 @patch("ralphkit.remote.subprocess.run")
