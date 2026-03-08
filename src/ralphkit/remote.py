@@ -52,7 +52,7 @@ def _ralph_cmd(
 ) -> str:
     """Build the uvx ralph command string."""
     pkg = f"ralphkit=={ralph_version}" if ralph_version else "ralphkit@latest"
-    parts = ["uvx", "--from", shlex.quote(pkg)]
+    parts = ["uvx", "--refresh", "--from", shlex.quote(pkg)]
     if allow_prerelease:
         parts += ["--prerelease", "allow"]
     parts += ["ralph", "run"]
