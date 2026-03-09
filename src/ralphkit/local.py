@@ -22,10 +22,10 @@ def _check_tmux() -> None:
 def submit_local(
     job_id: str, ralph_args: list[str], working_dir: str | None = None
 ) -> None:
-    """Launch a ralph job in a local detached tmux session."""
+    """Launch a ralphkit job in a local detached tmux session."""
     _check_tmux()
 
-    ralph_cmd = "ralph run " + shlex.join(ralph_args)
+    ralph_cmd = "ralphkit run " + shlex.join(ralph_args)
     script = build_job_script(job_id, ralph_cmd, working_dir)
     script_file = script_path_local(job_id)
     script_file.parent.mkdir(parents=True, exist_ok=True)
@@ -81,5 +81,5 @@ def cancel_local(job_id: str) -> None:
     )
     if result.returncode != 0:
         raise SystemExit(
-            f"No job '{job_id}' found.\n  Run 'ralph jobs' to list active jobs."
+            f"No job '{job_id}' found.\n  Run 'ralphkit jobs' to list active jobs."
         )

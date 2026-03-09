@@ -193,7 +193,7 @@ def test_submit_remote_resolves_task_file(mock_run, tmp_path):
     script_content = None
     for call in calls:
         inp = call[1].get("input", "")
-        if inp and "ralph run" in inp:
+        if inp and "ralphkit run" in inp:
             script_content = inp
             break
     assert script_content is not None

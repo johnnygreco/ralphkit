@@ -27,6 +27,11 @@ def test_build_job_script_exports_path():
     assert 'export PATH="$HOME/.local/bin' in script
 
 
+def test_build_job_script_enables_agent_teams():
+    script = build_job_script("rk-test-0307-120000-abcd", "ralph run pipe.yml")
+    assert "export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1" in script
+
+
 def test_parse_session_list_empty_string():
     assert parse_session_list("") == []
 

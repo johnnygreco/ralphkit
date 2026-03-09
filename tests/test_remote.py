@@ -20,26 +20,27 @@ _OK = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 def test_ralph_cmd_default():
     cmd = _ralph_cmd(["--model", "opus", "do stuff"])
     assert (
-        cmd == "uvx --refresh --from ralphkit@latest ralph run --model opus 'do stuff'"
+        cmd
+        == "uvx --refresh --from ralphkit@latest ralphkit run --model opus 'do stuff'"
     )
 
 
 def test_ralph_cmd_with_version():
     cmd = _ralph_cmd(["do stuff"], ralph_version="0.5.0")
-    assert cmd == "uvx --refresh --from ralphkit==0.5.0 ralph run 'do stuff'"
+    assert cmd == "uvx --refresh --from ralphkit==0.5.0 ralphkit run 'do stuff'"
 
 
 def test_ralph_cmd_auto_detects_prerelease():
     cmd = _ralph_cmd(["do stuff"], ralph_version="0.6.0a1")
     assert (
         cmd
-        == "uvx --refresh --from ralphkit==0.6.0a1 --prerelease allow ralph run 'do stuff'"
+        == "uvx --refresh --from ralphkit==0.6.0a1 --prerelease allow ralphkit run 'do stuff'"
     )
 
 
 def test_ralph_cmd_no_prerelease_for_stable():
     cmd = _ralph_cmd(["do stuff"], ralph_version="0.6.0")
-    assert cmd == "uvx --refresh --from ralphkit==0.6.0 ralph run 'do stuff'"
+    assert cmd == "uvx --refresh --from ralphkit==0.6.0 ralphkit run 'do stuff'"
 
 
 @pytest.mark.parametrize(
@@ -102,7 +103,7 @@ def test_submit_job_with_ralph_version(mock_run):
     # calls[0]=tmux check, calls[1]=upload script (includes mkdir)
     upload_call = calls[1]
     script_content = upload_call[1]["input"]
-    assert "uvx --refresh --from ralphkit==0.5.0 ralph" in script_content
+    assert "uvx --refresh --from ralphkit==0.5.0 ralphkit" in script_content
 
 
 @patch("ralphkit.remote.subprocess.run")
