@@ -1,9 +1,14 @@
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import TYPE_CHECKING, Annotated, Optional
 
 import typer
 
 from ralphkit.ui import console
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from ralphkit.config import RalphConfig, StepConfig
 
 
 app = typer.Typer(
@@ -24,9 +29,7 @@ StateDirOpt = Annotated[
 ]
 HostOpt = Annotated[
     Optional[str],
-    typer.Option(
-        "--host", "-H", help="Host ('local' for tmux, or SSH host name)"
-    ),
+    typer.Option("--host", "-H", help="Host ('local' for tmux, or SSH host name)"),
 ]
 MaxIterOpt = Annotated[
     Optional[int], typer.Option("--max-iterations", help="Override max iterations")
@@ -41,6 +44,7 @@ RalphVersionOpt = Annotated[
         "--ralph-version", help="ralphkit version for remote (default: latest)"
     ),
 ]
+ForceOpt = Annotated[bool, typer.Option("-f", "--force", help="Skip confirmation")]
 
 
 # -- Version callback --
@@ -69,10 +73,13 @@ def main_callback(
 # -- Dispatch helpers --
 
 
-def _print_submit_info(
-    job_id: str, host: str, working_dir: str | None
-) -> None:
-    is_remote = host != "local"
+def _is_remote(host: str | None) -> bool:
+    """Check if a host refers to a remote SSH target (not local or None)."""
+    return host is not None and host != "local"
+
+
+def _print_submit_info(job_id: str, host: str, working_dir: str | None) -> None:
+    is_remote = _is_remote(host)
     host_flag = f" --host {host}" if is_remote else ""
     console.print()
     console.print(f"  [success]Submitted[/] {job_id}")
@@ -81,9 +88,7 @@ def _print_submit_info(
         console.print(f"  [dim]Dir:[/]       {working_dir}")
     console.print(f"  [dim]Session:[/]   {job_id}")
     if is_remote:
-        console.print(
-            f"  [dim]Attach:[/]    ssh -t {host} tmux attach -t {job_id}"
-        )
+        console.print(f"  [dim]Attach:[/]    ssh -t {host} tmux attach -t {job_id}")
     else:
         console.print(f"  [dim]Attach:[/]    tmux attach -t {job_id}")
     console.print(f"  [dim]Logs:[/]      ralphkit logs {job_id}{host_flag}")
@@ -98,7 +103,7 @@ def _dispatch(
     force: bool,
     default_model: str | None = None,
     state_dir: str | None = None,
-    ralph_config=None,
+    ralph_config: RalphConfig | None = None,
     config_file: Path | None = None,
     max_iterations: int | None = None,
     plan_path: str | None = None,
@@ -108,6 +113,20 @@ def _dispatch(
     ralph_version: str | None = None,
 ) -> None:
     """Route a command to foreground execution or background submission."""
+    if host is None and (working_dir or ralph_version):
+        from ralphkit.ui import print_error
+
+        unused = []
+        if working_dir:
+            unused.append("--working-dir")
+        if ralph_version:
+            unused.append("--ralph-version")
+        print_error(f"{', '.join(unused)} requires --host")
+        raise SystemExit(1)
+
+    if ralph_config is not None and config_file is not None:
+        raise ValueError("cannot pass both ralph_config and config_file")
+
     if host is None:
         from ralphkit.engine import run_foreground
 
@@ -131,7 +150,7 @@ def _dispatch(
 
     resolved_task = resolve_task(task) if task else None
     job_id = make_job_id(resolved_task or "job")
-    is_remote = host != "local"
+    is_remote = _is_remote(host)
 
     # Build CLI args for the background subcommand
     args: list[str] = []
@@ -147,11 +166,23 @@ def _dispatch(
         args += ["--state-dir", state_dir]
     if plan_model:
         args += ["--plan-model", plan_model]
-    if plan_path:
+    if plan_path and not is_remote:
         args += ["--plan", plan_path]
+    if plan_only:
+        args.append("--plan-only")
     args.append("--force")
 
     config_content = config_file.read_text() if (is_remote and config_file) else None
+
+    plan_content = None
+    if is_remote and plan_path:
+        try:
+            plan_content = Path(plan_path).read_text()
+        except (FileNotFoundError, OSError):
+            from ralphkit.ui import print_error
+
+            print_error(f"Plan file not found: {plan_path}")
+            raise SystemExit(1)
 
     if is_remote:
         from ralphkit.remote import submit_job
@@ -164,6 +195,7 @@ def _dispatch(
             working_dir=working_dir,
             ralph_version=ralph_version,
             config_content=config_content,
+            plan_content=plan_content,
         )
     else:
         from ralphkit.local import submit_local
@@ -179,7 +211,7 @@ def _dispatch(
 def _pipe_workflow(
     subcommand: str,
     task: str,
-    steps_factory,
+    steps_factory: Callable[[], list[StepConfig]],
     *,
     default_model: str | None,
     state_dir: str | None,
@@ -225,9 +257,7 @@ def build(
     default_model: ModelOpt = None,
     state_dir: StateDirOpt = None,
     host: HostOpt = None,
-    force: Annotated[
-        bool, typer.Option("-f", "--force", help="Skip confirmation")
-    ] = False,
+    force: ForceOpt = False,
     max_iterations: MaxIterOpt = None,
     plan_model: Annotated[
         Optional[str],
@@ -235,9 +265,7 @@ def build(
     ] = None,
     plan: Annotated[
         Optional[Path],
-        typer.Option(
-            "--plan", help="Path to pre-made tickets.json (skips planning)"
-        ),
+        typer.Option("--plan", help="Path to pre-made tickets.json (skips planning)"),
     ] = None,
     plan_only: Annotated[
         bool,
@@ -289,9 +317,7 @@ def fix(
     default_model: ModelOpt = None,
     state_dir: StateDirOpt = None,
     host: HostOpt = None,
-    force: Annotated[
-        bool, typer.Option("-f", "--force", help="Skip confirmation")
-    ] = False,
+    force: ForceOpt = False,
     working_dir: WorkingDirOpt = None,
     ralph_version: RalphVersionOpt = None,
 ) -> None:
@@ -319,9 +345,7 @@ def research(
     default_model: ModelOpt = None,
     state_dir: StateDirOpt = None,
     host: HostOpt = None,
-    force: Annotated[
-        bool, typer.Option("-f", "--force", help="Skip confirmation")
-    ] = False,
+    force: ForceOpt = False,
     working_dir: WorkingDirOpt = None,
     ralph_version: RalphVersionOpt = None,
 ) -> None:
@@ -349,9 +373,7 @@ def plan(
     default_model: ModelOpt = None,
     state_dir: StateDirOpt = None,
     host: HostOpt = None,
-    force: Annotated[
-        bool, typer.Option("-f", "--force", help="Skip confirmation")
-    ] = False,
+    force: ForceOpt = False,
     working_dir: WorkingDirOpt = None,
     ralph_version: RalphVersionOpt = None,
 ) -> None:
@@ -379,9 +401,7 @@ def big_swing(
     default_model: ModelOpt = None,
     state_dir: StateDirOpt = None,
     host: HostOpt = None,
-    force: Annotated[
-        bool, typer.Option("-f", "--force", help="Skip confirmation")
-    ] = False,
+    force: ForceOpt = False,
     working_dir: WorkingDirOpt = None,
     ralph_version: RalphVersionOpt = None,
 ) -> None:
@@ -423,9 +443,7 @@ def pipe(
     default_model: ModelOpt = None,
     state_dir: StateDirOpt = None,
     host: HostOpt = None,
-    force: Annotated[
-        bool, typer.Option("-f", "--force", help="Skip confirmation")
-    ] = False,
+    force: ForceOpt = False,
     working_dir: WorkingDirOpt = None,
     ralph_version: RalphVersionOpt = None,
 ) -> None:
@@ -462,9 +480,7 @@ def loop(
     default_model: ModelOpt = None,
     state_dir: StateDirOpt = None,
     host: HostOpt = None,
-    force: Annotated[
-        bool, typer.Option("-f", "--force", help="Skip confirmation")
-    ] = False,
+    force: ForceOpt = False,
     max_iterations: MaxIterOpt = None,
     plan_model: Annotated[
         Optional[str],
@@ -472,9 +488,7 @@ def loop(
     ] = None,
     plan: Annotated[
         Optional[Path],
-        typer.Option(
-            "--plan", help="Path to pre-made tickets.json (skips planning)"
-        ),
+        typer.Option("--plan", help="Path to pre-made tickets.json (skips planning)"),
     ] = None,
     plan_only: Annotated[
         bool,
@@ -511,7 +525,9 @@ def runs(state_dir: StateDirOpt = None) -> None:
 
     from ralphkit.state import StateDir
 
-    sd = StateDir(state_dir or ".ralphkit")
+    from ralphkit.config import STATE_DIR
+
+    sd = StateDir(state_dir or STATE_DIR)
     run_list = sd.list_runs()
     if not run_list:
         console.print("No runs found.")
@@ -541,9 +557,7 @@ def runs(state_dir: StateDirOpt = None) -> None:
                         plan_info = f"  [dim][{done}/{total}][/]"
                 except (json.JSONDecodeError, TypeError):
                     pass
-            console.print(
-                f"  [label]#{run_dir.name}[/]  {first_line}{plan_info}"
-            )
+            console.print(f"  [label]#{run_dir.name}[/]  {first_line}{plan_info}")
 
 
 # -- jobs command --
@@ -554,7 +568,7 @@ def jobs(host: HostOpt = None) -> None:
     """List active ralphkit jobs."""
     from ralphkit.ui import print_jobs_table
 
-    if host:
+    if _is_remote(host):
         from ralphkit.remote import list_jobs
 
         items = list_jobs(host)
@@ -582,7 +596,7 @@ def logs(
     ] = False,
 ) -> None:
     """View logs for a running or completed job."""
-    if host:
+    if _is_remote(host):
         from ralphkit.remote import tail_logs
 
         tail_logs(host, job_id, follow)
@@ -601,7 +615,7 @@ def cancel(
     host: HostOpt = None,
 ) -> None:
     """Cancel a running job."""
-    if host:
+    if _is_remote(host):
         from ralphkit.remote import cancel_job
 
         cancel_job(host, job_id)
@@ -611,6 +625,37 @@ def cancel(
         cancel_local(job_id)
 
     console.print(f"  [success]Cancelled[/] {job_id}")
+
+
+# -- Migration shims for removed commands --
+
+
+@app.command(hidden=True)
+def run(
+    args: Annotated[Optional[list[str]], typer.Argument(help="(removed)")] = None,
+) -> None:
+    """Removed — use 'ralphkit build' instead."""
+    from ralphkit.ui import err_console
+
+    err_console.print(
+        "[error]Error:[/] 'run' was removed. Use [bold]ralphkit build[/] instead.\n"
+        '  Example: ralphkit build "your task"'
+    )
+    raise typer.Exit(1)
+
+
+@app.command(hidden=True)
+def submit(
+    args: Annotated[Optional[list[str]], typer.Argument(help="(removed)")] = None,
+) -> None:
+    """Removed — use '--host' flag instead."""
+    from ralphkit.ui import err_console
+
+    err_console.print(
+        "[error]Error:[/] 'submit' was removed. Use [bold]--host[/] on any command instead.\n"
+        '  Example: ralphkit build "task" --host mini'
+    )
+    raise typer.Exit(1)
 
 
 # -- Entry point --

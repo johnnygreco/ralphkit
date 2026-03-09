@@ -50,7 +50,7 @@ def resolve_task(raw: str) -> str:
         try:
             return p.read_text()
         except (FileNotFoundError, OSError):
-            pass
+            print_warning(f"File '{raw}' not found, using as literal task string")
     return raw
 
 
@@ -263,8 +263,11 @@ def run_foreground(
             print_report(report)
             report.save(state.path / "report.json")
             console.print(f"  [dim]Saved to {state.path / 'report.json'}[/]")
-        except Exception:
-            pass
+        except Exception as e:
+            try:
+                print_warning(f"Failed to save report: {e}")
+            except Exception:
+                pass
 
     def _record_step(step, model, claude_out, t0, phase, before_diff, iteration=None):
         before_add, before_del = before_diff
@@ -515,8 +518,13 @@ def run_foreground(
                 print_step_start(idx, total_cleanup, step.step_name)
                 before_diff = git_diff_stat()
                 t0 = time.time()
-                model, claude_out = _run_step(step)
-                _record_step(step, model, claude_out, t0, "cleanup", before_diff)
-                print_step_done(fmt_duration(time.time() - t0))
+                try:
+                    model, claude_out = _run_step(step)
+                    _record_step(step, model, claude_out, t0, "cleanup", before_diff)
+                    print_step_done(fmt_duration(time.time() - t0))
+                except SystemExit:
+                    print_warning(
+                        f"Cleanup step '{step.step_name}' failed, continuing..."
+                    )
             console.print()
         _finalize_report()

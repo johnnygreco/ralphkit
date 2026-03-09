@@ -572,21 +572,11 @@ RULES:
 
 def make_build_config() -> dict:
     """Return loop and cleanup steps for the build workflow."""
+    from ralphkit.config import _default_cleanup, _default_loop
+
     return {
-        "loop": [
-            StepConfig(
-                step_name="worker",
-                task_prompt=DEFAULT_WORKER_TASK_PROMPT,
-                system_prompt=DEFAULT_WORKER_SYSTEM_PROMPT,
-            ),
-        ],
-        "cleanup": [
-            StepConfig(
-                step_name="review",
-                task_prompt=DEFAULT_CLEANUP_TASK_PROMPT,
-                system_prompt=DEFAULT_CLEANUP_SYSTEM_PROMPT,
-            ),
-        ],
+        "loop": _default_loop(),
+        "cleanup": _default_cleanup(),
     }
 
 

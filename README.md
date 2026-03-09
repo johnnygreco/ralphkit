@@ -157,7 +157,7 @@ ralphkit runs                          # List past completed runs
 
 ## Config
 
-The config file is optional for `pipe` and `loop` generic primitives. The named subcommands (`build`, `fix`, etc.) have built-in configs. The mode is determined by your config: include a `pipe:` section for pipe mode, otherwise it runs as a loop.
+The `--config` flag is **required** for the `pipe` and `loop` generic primitives. The named subcommands (`build`, `fix`, etc.) have built-in configs. The mode is determined by your config: include a `pipe:` section for pipe mode, otherwise it runs as a loop.
 
 ### Loop config
 

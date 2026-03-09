@@ -74,6 +74,7 @@ def submit_job(
     working_dir: str | None = None,
     ralph_version: str | None = None,
     config_content: str | None = None,
+    plan_content: str | None = None,
 ) -> None:
     """Submit a ralphkit job to a remote host via SSH + tmux."""
     # Pre-flight: tmux available?
@@ -92,15 +93,28 @@ def submit_job(
                 f"Working directory does not exist on '{host}': {working_dir}"
             )
 
+    # Ensure logs directory exists (once, before any uploads)
+    _ssh_run(host, f"mkdir -p {LOGS_DIR_SHELL}")
+
     # Upload config file if provided
     if config_content is not None:
         config_path = f"{LOGS_DIR_SHELL}/{job_id}.config.yaml"
         _ssh_run(
             host,
-            f"mkdir -p {LOGS_DIR_SHELL} && cat > {config_path}",
+            f"cat > {config_path}",
             input=config_content,
         )
         ralph_args = ralph_args + ["--config", config_path]
+
+    # Upload plan file if provided
+    if plan_content is not None:
+        plan_path = f"{LOGS_DIR_SHELL}/{job_id}.tickets.json"
+        _ssh_run(
+            host,
+            f"cat > {plan_path}",
+            input=plan_content,
+        )
+        ralph_args = ralph_args + ["--plan", plan_path]
 
     # Generate job script
     ralph_cmd = _ralph_cmd(ralph_args, ralph_version, subcommand=subcommand)
@@ -114,7 +128,7 @@ def submit_job(
     script_path = f"{LOGS_DIR_SHELL}/{job_id}.sh"
     _ssh_run(
         host,
-        f"mkdir -p {LOGS_DIR_SHELL} && cat > {script_path} && chmod +x {script_path}",
+        f"cat > {script_path} && chmod +x {script_path}",
         input=script,
     )
 

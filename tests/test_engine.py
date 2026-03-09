@@ -12,6 +12,7 @@ from ralphkit.engine import (
     _run_phase,
     _step_names,
     _validate_plan,
+    resolve_task,
     run_foreground,
 )
 from ralphkit.config import STATE_DIR, StepConfig
@@ -988,3 +989,15 @@ def test_resolve_handoff_falls_back_to_default():
     step = StepConfig(step_name="s", task_prompt="", system_prompt="")
     result = _resolve_handoff(step, None, 1, 1, [step], "dir")
     assert "task.md" in result
+
+
+# -- resolve_task --
+
+
+@patch("ralphkit.engine.print_warning")
+def test_resolve_task_warns_on_missing_md(mock_warn):
+    """resolve_task warns when .md file doesn't exist."""
+    result = resolve_task("nonexistent-file.md")
+    assert result == "nonexistent-file.md"
+    mock_warn.assert_called_once()
+    assert "nonexistent-file.md" in mock_warn.call_args[0][0]

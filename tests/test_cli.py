@@ -41,15 +41,26 @@ def test_version_flag():
     assert "ralphkit" in result.output
 
 
-def test_old_commands_removed():
-    """run and submit commands no longer exist."""
+def test_old_commands_hidden_from_help():
+    """run and submit don't appear in --help output."""
     result = runner.invoke(app, ["--help"])
-    # 'runs' is valid, but bare 'run ' as a subcommand should not appear
     lines = result.output.split("\n")
-    command_lines = [l.strip() for l in lines if l.strip()]
-    # Check no line starts with 'run ' (the run command) — 'runs' is fine
-    assert not any(l.startswith("run ") for l in command_lines)
-    assert "submit" not in result.output
+    command_lines = [line.strip() for line in lines if line.strip()]
+    assert not any(line.startswith("run ") for line in command_lines)
+    assert not any(line.startswith("submit ") for line in command_lines)
+
+
+def test_old_commands_show_deprecation():
+    """run and submit show deprecation messages."""
+    result = runner.invoke(app, ["run", "my task"])
+    assert result.exit_code != 0
+    assert "removed" in _strip_ansi(result.output).lower()
+    assert "build" in _strip_ansi(result.output)
+
+    result = runner.invoke(app, ["submit", "my task"])
+    assert result.exit_code != 0
+    assert "removed" in _strip_ansi(result.output).lower()
+    assert "--host" in _strip_ansi(result.output)
 
 
 # -- build command --
@@ -149,6 +160,53 @@ def test_big_swing_foreground(mock_fg):
     assert len(mock_fg.call_args.kwargs["ralph_config"].pipe) == 6
 
 
+# -- pipe step names --
+
+
+@patch("ralphkit.engine.run_foreground")
+def test_fix_foreground_step_names(mock_fg):
+    """fix command wires correct factory with correct step names."""
+    mock_fg.side_effect = SystemExit(0)
+    runner.invoke(app, ["fix", "Bug report", "-f"])
+    mock_fg.assert_called_once()
+    pipe = mock_fg.call_args.kwargs["ralph_config"].pipe
+    assert [s.step_name for s in pipe] == ["diagnose", "fix", "verify"]
+
+
+@patch("ralphkit.engine.run_foreground")
+def test_research_foreground_step_names(mock_fg):
+    """research command wires correct step names."""
+    mock_fg.side_effect = SystemExit(0)
+    runner.invoke(app, ["research", "Topic", "-f"])
+    pipe = mock_fg.call_args.kwargs["ralph_config"].pipe
+    assert [s.step_name for s in pipe] == ["explore", "synthesize", "report"]
+
+
+@patch("ralphkit.engine.run_foreground")
+def test_plan_foreground_step_names(mock_fg):
+    """plan command wires correct step names."""
+    mock_fg.side_effect = SystemExit(0)
+    runner.invoke(app, ["plan", "Design task", "-f"])
+    pipe = mock_fg.call_args.kwargs["ralph_config"].pipe
+    assert [s.step_name for s in pipe] == ["analyze", "design"]
+
+
+@patch("ralphkit.engine.run_foreground")
+def test_big_swing_foreground_step_names(mock_fg):
+    """big-swing command wires correct step names."""
+    mock_fg.side_effect = SystemExit(0)
+    runner.invoke(app, ["big-swing", "Epic task", "-f"])
+    pipe = mock_fg.call_args.kwargs["ralph_config"].pipe
+    assert [s.step_name for s in pipe] == [
+        "research",
+        "plan",
+        "build",
+        "review",
+        "fix",
+        "verify",
+    ]
+
+
 # -- background dispatch --
 
 
@@ -162,6 +220,36 @@ def test_build_host_local(mock_run, mock_which):
     result = runner.invoke(app, ["build", "do stuff", "--host", "local"])
     assert result.exit_code == 0
     assert "Submitted" in result.output
+
+
+@patch("ralphkit.local.shutil.which", return_value="/usr/bin/tmux")
+@patch("ralphkit.local.subprocess.run")
+def test_build_host_local_forwards_options(mock_run, mock_which, tmp_path):
+    """build --host local forwards --max-iterations, --plan-model, --plan-only."""
+    mock_run.return_value = __import__("subprocess").CompletedProcess(
+        args=[], returncode=0
+    )
+    with patch("ralphkit.local.script_path_local", return_value=tmp_path / "job.sh"):
+        result = runner.invoke(
+            app,
+            [
+                "build",
+                "task",
+                "--host",
+                "local",
+                "--max-iterations",
+                "3",
+                "--plan-model",
+                "haiku",
+                "--plan-only",
+            ],
+        )
+    assert result.exit_code == 0
+    script = (tmp_path / "job.sh").read_text()
+    assert "--max-iterations 3" in script
+    assert "--plan-model haiku" in script
+    assert "--plan-only" in script
+    assert "--force" in script
 
 
 @patch("ralphkit.remote.subprocess.run")
@@ -209,6 +297,19 @@ def test_jobs_local_empty(mock_run):
     )
     result = runner.invoke(app, ["jobs"])
     assert "No active jobs" in result.output
+
+
+@patch("ralphkit.local.subprocess.run")
+def test_jobs_host_local_uses_local(mock_run):
+    """jobs --host local should list local jobs, not SSH to 'local'."""
+    mock_run.return_value = __import__("subprocess").CompletedProcess(
+        args=[], returncode=1, stdout="", stderr=""
+    )
+    result = runner.invoke(app, ["jobs", "--host", "local"])
+    assert "No active jobs" in result.output
+    # Verify it called tmux list-sessions, not ssh
+    call_args = mock_run.call_args[0][0]
+    assert call_args[0] == "tmux"
 
 
 @patch("ralphkit.remote.subprocess.run")
@@ -295,19 +396,16 @@ def test_loop_foreground(mock_fg, tmp_path):
 
 @patch("ralphkit.local.shutil.which", return_value="/usr/bin/tmux")
 @patch("ralphkit.local.subprocess.run")
-def test_host_auto_injects_force(mock_run, mock_which):
+def test_host_auto_injects_force(mock_run, mock_which, tmp_path):
     """--host should auto-inject --force in background job args."""
     mock_run.return_value = __import__("subprocess").CompletedProcess(
         args=[], returncode=0
     )
-    result = runner.invoke(app, ["build", "do stuff", "--host", "local"])
+    with patch("ralphkit.local.script_path_local", return_value=tmp_path / "job.sh"):
+        result = runner.invoke(app, ["build", "do stuff", "--host", "local"])
     assert result.exit_code == 0
-    # The script written by submit_local should contain --force
-    script_file = mock_run.call_args[0][0]
-    # tmux new-session command includes the script path
-    # The job script is written to disk and passed to tmux
-    # Just verify submit_local was called (force is in the CLI args)
-    mock_run.assert_called_once()
+    script = (tmp_path / "job.sh").read_text()
+    assert "--force" in script
 
 
 @patch("ralphkit.remote.subprocess.run")
@@ -316,9 +414,7 @@ def test_remote_dispatch_includes_force(mock_run):
     mock_run.return_value = __import__("subprocess").CompletedProcess(
         args=[], returncode=0, stdout="", stderr=""
     )
-    result = runner.invoke(
-        app, ["research", "topic", "--host", "dev.example.com"]
-    )
+    result = runner.invoke(app, ["research", "topic", "--host", "dev.example.com"])
     assert result.exit_code == 0
     # The script uploaded to remote should contain --force
     calls = mock_run.call_args_list
@@ -327,7 +423,58 @@ def test_remote_dispatch_includes_force(mock_run):
     assert any("--force" in c[1]["input"] for c in script_calls)
 
 
+# -- remote dispatch with config --
+
+
+@patch("ralphkit.remote.subprocess.run")
+def test_pipe_host_remote_uploads_config(mock_run, tmp_path):
+    """pipe --host remote --config uploads config content."""
+    mock_run.return_value = __import__("subprocess").CompletedProcess(
+        args=[], returncode=0, stdout="", stderr=""
+    )
+    cfg = tmp_path / "pipe.yaml"
+    cfg.write_text(
+        "pipe:\n  - step_name: s1\n    task_prompt: P.\n    system_prompt: S.\n"
+    )
+    result = runner.invoke(
+        app, ["pipe", "task", "--config", str(cfg), "--host", "dev.example.com"]
+    )
+    assert result.exit_code == 0
+    calls = mock_run.call_args_list
+    config_uploads = [
+        c for c in calls if c[1].get("input") and "pipe:" in str(c[1]["input"])
+    ]
+    assert len(config_uploads) >= 1
+
+
 # -- subcommand dispatch names --
+
+
+@patch("ralphkit.remote.subprocess.run")
+def test_build_host_remote_uploads_plan(mock_run, tmp_path):
+    """build --host remote --plan uploads plan file."""
+    mock_run.return_value = __import__("subprocess").CompletedProcess(
+        args=[], returncode=0, stdout="", stderr=""
+    )
+    plan_file = tmp_path / "tickets.json"
+    plan_file.write_text('{"items": []}')
+    result = runner.invoke(
+        app,
+        [
+            "build",
+            "task",
+            "--host",
+            "dev.example.com",
+            "--plan",
+            str(plan_file),
+        ],
+    )
+    assert result.exit_code == 0
+    calls = mock_run.call_args_list
+    plan_uploads = [
+        c for c in calls if c[1].get("input") and "items" in str(c[1]["input"])
+    ]
+    assert len(plan_uploads) >= 1
 
 
 @patch("ralphkit.local.shutil.which", return_value="/usr/bin/tmux")
@@ -342,3 +489,20 @@ def test_fix_host_local_uses_fix_subcommand(mock_run, mock_which, tmp_path):
     assert result.exit_code == 0
     script = (tmp_path / "job.sh").read_text()
     assert "ralphkit fix" in script
+
+
+# -- validation: --working-dir / --ralph-version require --host --
+
+
+def test_working_dir_without_host_errors():
+    """--working-dir without --host should error."""
+    result = runner.invoke(app, ["build", "task", "--working-dir", "/tmp/x", "-f"])
+    assert result.exit_code != 0
+    assert "--host" in _strip_ansi(result.output)
+
+
+def test_ralph_version_without_host_errors():
+    """--ralph-version without --host should error."""
+    result = runner.invoke(app, ["fix", "bug", "--ralph-version", "0.5.0", "-f"])
+    assert result.exit_code != 0
+    assert "--host" in _strip_ansi(result.output)
