@@ -32,6 +32,7 @@ def build_job_script(
         "# Ensure common tool locations are in PATH (tmux may not inherit login PATH)",
         'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"',
         "export FORCE_COLOR=1",  # Rich respects this even through tee/tmux
+        "export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1",
         "",
         f'LOG_DIR="{LOGS_DIR_SHELL}"',
         f'LOG_FILE="$LOG_DIR/{job_id}.log"',
