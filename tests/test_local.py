@@ -46,6 +46,20 @@ def test_submit_local_script_file_is_executable(mock_run, mock_which, tmp_path):
     assert script_file.stat().st_mode & 0o777 == 0o700
 
 
+@patch("ralphkit.local.shutil.which", return_value="/usr/bin/tmux")
+@patch("ralphkit.local.subprocess.run")
+def test_submit_local_uses_subcommand_in_script(mock_run, mock_which, tmp_path):
+    mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+    job_id = "rk-test-0307-120000-abcd"
+    script_file = tmp_path / f"{job_id}.sh"
+    with patch("ralphkit.local.script_path_local", return_value=script_file):
+        submit_local(job_id, ["task.md", "--force"], subcommand="build")
+
+    script_content = script_file.read_text()
+    assert "ralphkit build task.md --force" in script_content
+    assert "ralphkit run" not in script_content
+
+
 @patch("ralphkit.local.subprocess.run")
 def test_list_local_jobs_returns_empty_on_tmux_error(mock_run):
     mock_run.return_value = subprocess.CompletedProcess(

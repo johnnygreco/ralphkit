@@ -54,13 +54,14 @@ def _is_prerelease(version: str) -> bool:
 def _ralph_cmd(
     ralph_args: list[str],
     ralph_version: str | None = None,
+    subcommand: str = "run",
 ) -> str:
     """Build the uvx ralphkit command string."""
     pkg = f"ralphkit=={ralph_version}" if ralph_version else "ralphkit@latest"
     parts = ["uvx", "--refresh", "--from", shlex.quote(pkg)]
     if ralph_version and _is_prerelease(ralph_version):
         parts += ["--prerelease", "allow"]
-    parts += ["ralphkit", "run"]
+    parts += ["ralphkit", subcommand]
     return " ".join(parts) + " " + shlex.join(ralph_args)
 
 
@@ -68,6 +69,7 @@ def submit_job(
     host: str,
     job_id: str,
     ralph_args: list[str],
+    subcommand: str = "run",
     working_dir: str | None = None,
     ralph_version: str | None = None,
     config_content: str | None = None,
@@ -100,7 +102,7 @@ def submit_job(
         ralph_args = ralph_args + ["--config", config_path]
 
     # Generate job script
-    ralph_cmd = _ralph_cmd(ralph_args, ralph_version)
+    ralph_cmd = _ralph_cmd(ralph_args, ralph_version, subcommand=subcommand)
     script = build_job_script(
         job_id,
         ralph_cmd,
