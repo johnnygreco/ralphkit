@@ -10,7 +10,10 @@ DEFAULT_MODEL = "opus"
 
 
 def _default_cleanup() -> list["StepConfig"]:
-    from ralphkit.prompts import DEFAULT_CLEANUP_SYSTEM_PROMPT, DEFAULT_CLEANUP_TASK_PROMPT
+    from ralphkit.prompts import (
+        DEFAULT_CLEANUP_SYSTEM_PROMPT,
+        DEFAULT_CLEANUP_TASK_PROMPT,
+    )
 
     return [
         StepConfig(
@@ -22,7 +25,10 @@ def _default_cleanup() -> list["StepConfig"]:
 
 
 def _default_loop() -> list["StepConfig"]:
-    from ralphkit.prompts import DEFAULT_WORKER_SYSTEM_PROMPT, DEFAULT_WORKER_TASK_PROMPT
+    from ralphkit.prompts import (
+        DEFAULT_WORKER_SYSTEM_PROMPT,
+        DEFAULT_WORKER_TASK_PROMPT,
+    )
 
     return [
         StepConfig(
