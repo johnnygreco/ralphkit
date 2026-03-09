@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,6 +18,11 @@ from ralphkit.config import STATE_DIR, StepConfig
 
 
 # -- Helper --
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes from text."""
+    return re.sub(r"\x1b\[[^m]*m", "", text)
 
 
 def _minimal_config_yaml():
@@ -522,7 +528,7 @@ def test_foreground_shows_run_number(mock_run, monkeypatch, tmp_path, capsys):
     with pytest.raises(SystemExit) as exc_info:
         run_foreground(task="do stuff", config_path=str(cfg), force=True)
     assert exc_info.value.code == 0
-    assert "#001" in capsys.readouterr().out
+    assert "#001" in _strip_ansi(capsys.readouterr().out)
 
 
 @patch("ralphkit.engine.time")
@@ -552,7 +558,7 @@ def test_foreground_shows_step_numbering(
         run_foreground(task="do stuff", config_path=str(cfg), force=True)
     assert exc_info.value.code == 0
 
-    out = capsys.readouterr().out
+    out = _strip_ansi(capsys.readouterr().out)
     assert "[1/2]" in out
     assert "[2/2]" in out
 
