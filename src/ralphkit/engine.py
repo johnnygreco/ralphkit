@@ -5,11 +5,13 @@ from dataclasses import replace
 from pathlib import Path
 
 from ralphkit.config import (
-    DEFAULT_PLANNER_SYSTEM_PROMPT,
-    DEFAULT_PLANNER_TASK_PROMPT,
     StepConfig,
     load_config,
     resolve_model,
+)
+from ralphkit.prompts import (
+    DEFAULT_PLANNER_SYSTEM_PROMPT,
+    DEFAULT_PLANNER_TASK_PROMPT,
 )
 from ralphkit.report import RunReport, git_diff_stat, print_report
 from ralphkit.runner import run_claude
