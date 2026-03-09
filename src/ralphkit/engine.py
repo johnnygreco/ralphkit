@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from ralphkit.config import (
+    RalphConfig,
     StepConfig,
     load_config,
     resolve_model,
@@ -145,13 +146,17 @@ def run_foreground(
     plan_path: str | None = None,
     plan_only: bool = False,
     plan_model: str | None = None,
+    ralph_config: RalphConfig | None = None,
 ) -> None:
     """Run a ralphkit task in the foreground (pipe or loop mode)."""
-    try:
-        config = load_config(config_path)
-    except ValueError as e:
-        print_error(f"Config error: {e}")
-        sys.exit(1)
+    if ralph_config is not None:
+        config = ralph_config
+    else:
+        try:
+            config = load_config(config_path)
+        except ValueError as e:
+            print_error(f"Config error: {e}")
+            sys.exit(1)
 
     if max_iterations is not None:
         if max_iterations < 1:

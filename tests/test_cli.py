@@ -1,4 +1,4 @@
-"""Tests for CLI command routing (Typer + RalphGroup)."""
+"""Tests for CLI subcommands and dispatch."""
 
 from unittest.mock import patch
 
@@ -10,49 +10,164 @@ from ralphkit.cli import app
 runner = CliRunner()
 
 
-# -- Default command routing --
-
-
-@patch("ralphkit.engine.run_foreground")
-def test_bare_task_routes_to_run(mock_fg):
-    """ralph 'Add tests' routes to run command."""
-    mock_fg.side_effect = SystemExit(0)
-    runner.invoke(app, ["Add tests"])
-    mock_fg.assert_called_once()
-    assert mock_fg.call_args.kwargs["task"] == "Add tests"
-
-
-@patch("ralphkit.engine.run_foreground")
-def test_explicit_run_command(mock_fg):
-    """ralph run 'Add tests' calls run_foreground directly."""
-    mock_fg.side_effect = SystemExit(0)
-    runner.invoke(app, ["run", "Add tests"])
-    mock_fg.assert_called_once()
-    assert mock_fg.call_args.kwargs["task"] == "Add tests"
+# -- Help and version --
 
 
 def test_help_shows_commands():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    assert "run" in result.output
+    assert "build" in result.output
+    assert "fix" in result.output
+    assert "research" in result.output
+    assert "plan" in result.output
+    assert "big-swing" in result.output
+    assert "pipe" in result.output
+    assert "loop" in result.output
     assert "runs" in result.output
-    assert "submit" in result.output
     assert "jobs" in result.output
     assert "logs" in result.output
     assert "cancel" in result.output
-
-
-def test_runs_command_not_confused_with_run():
-    """ralph runs should route to the runs command, not run('runs')."""
-    result = runner.invoke(app, ["runs", "--state-dir", "/nonexistent"])
-    # Should print "No runs found." since /nonexistent has no runs
-    assert "No runs found." in result.output
 
 
 def test_version_flag():
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
     assert "ralphkit" in result.output
+
+
+def test_old_commands_removed():
+    """run and submit commands no longer exist."""
+    result = runner.invoke(app, ["--help"])
+    # 'runs' is valid, but bare 'run ' as a subcommand should not appear
+    lines = result.output.split("\n")
+    command_lines = [l.strip() for l in lines if l.strip()]
+    # Check no line starts with 'run ' (the run command) — 'runs' is fine
+    assert not any(l.startswith("run ") for l in command_lines)
+    assert "submit" not in result.output
+
+
+# -- build command --
+
+
+@patch("ralphkit.engine.run_foreground")
+def test_build_foreground(mock_fg):
+    """build command calls run_foreground with a RalphConfig."""
+    mock_fg.side_effect = SystemExit(0)
+    runner.invoke(app, ["build", "Add tests", "-f"])
+    mock_fg.assert_called_once()
+    kwargs = mock_fg.call_args.kwargs
+    assert kwargs["task"] == "Add tests"
+    assert kwargs["force"] is True
+    assert kwargs["ralph_config"] is not None
+    assert len(kwargs["ralph_config"].loop) > 0
+    assert len(kwargs["ralph_config"].cleanup) > 0
+
+
+@patch("ralphkit.engine.run_foreground")
+def test_build_passes_options(mock_fg):
+    """build forwards all options to run_foreground."""
+    mock_fg.side_effect = SystemExit(0)
+    runner.invoke(
+        app,
+        [
+            "build",
+            "my task",
+            "--max-iterations",
+            "5",
+            "--default-model",
+            "sonnet",
+            "--state-dir",
+            "/tmp/test",
+            "--plan-model",
+            "haiku",
+            "-f",
+        ],
+    )
+    mock_fg.assert_called_once()
+    kwargs = mock_fg.call_args.kwargs
+    assert kwargs["task"] == "my task"
+    assert kwargs["max_iterations"] == 5
+    assert kwargs["default_model"] == "sonnet"
+    assert kwargs["state_dir"] == "/tmp/test"
+    assert kwargs["plan_model"] == "haiku"
+    assert kwargs["force"] is True
+
+
+# -- fix command --
+
+
+@patch("ralphkit.engine.run_foreground")
+def test_fix_foreground(mock_fg):
+    """fix command creates pipe config with 3 steps."""
+    mock_fg.side_effect = SystemExit(0)
+    runner.invoke(app, ["fix", "Bug report", "-f"])
+    mock_fg.assert_called_once()
+    kwargs = mock_fg.call_args.kwargs
+    assert kwargs["task"] == "Bug report"
+    assert len(kwargs["ralph_config"].pipe) == 3
+
+
+# -- research command --
+
+
+@patch("ralphkit.engine.run_foreground")
+def test_research_foreground(mock_fg):
+    """research command creates pipe config with 3 steps."""
+    mock_fg.side_effect = SystemExit(0)
+    runner.invoke(app, ["research", "Topic", "-f"])
+    mock_fg.assert_called_once()
+    assert len(mock_fg.call_args.kwargs["ralph_config"].pipe) == 3
+
+
+# -- plan command --
+
+
+@patch("ralphkit.engine.run_foreground")
+def test_plan_foreground(mock_fg):
+    """plan command creates pipe config with 2 steps."""
+    mock_fg.side_effect = SystemExit(0)
+    runner.invoke(app, ["plan", "Design task", "-f"])
+    mock_fg.assert_called_once()
+    assert len(mock_fg.call_args.kwargs["ralph_config"].pipe) == 2
+
+
+# -- big-swing command --
+
+
+@patch("ralphkit.engine.run_foreground")
+def test_big_swing_foreground(mock_fg):
+    """big-swing command creates pipe config with 6 steps."""
+    mock_fg.side_effect = SystemExit(0)
+    runner.invoke(app, ["big-swing", "Epic task", "-f"])
+    mock_fg.assert_called_once()
+    assert len(mock_fg.call_args.kwargs["ralph_config"].pipe) == 6
+
+
+# -- background dispatch --
+
+
+@patch("ralphkit.local.shutil.which", return_value="/usr/bin/tmux")
+@patch("ralphkit.local.subprocess.run")
+def test_build_host_local(mock_run, mock_which):
+    """build --host local submits to local tmux."""
+    mock_run.return_value = __import__("subprocess").CompletedProcess(
+        args=[], returncode=0
+    )
+    result = runner.invoke(app, ["build", "do stuff", "--host", "local"])
+    assert result.exit_code == 0
+    assert "Submitted" in result.output
+
+
+@patch("ralphkit.remote.subprocess.run")
+def test_fix_host_remote(mock_run):
+    """fix --host <name> submits via SSH."""
+    mock_run.return_value = __import__("subprocess").CompletedProcess(
+        args=[], returncode=0, stdout="", stderr=""
+    )
+    result = runner.invoke(app, ["fix", "bug report", "--host", "dev.example.com"])
+    assert result.exit_code == 0
+    assert "Submitted" in result.output
+    assert "dev.example.com" in result.output
 
 
 # -- runs command --
@@ -75,130 +190,6 @@ def test_runs_shows_entries(tmp_path):
     assert "first task" in result.output
     assert "#002" in result.output
     assert "second task" in result.output
-
-
-# -- run command options --
-
-
-@patch("ralphkit.engine.run_foreground")
-def test_run_passes_all_options(mock_fg, tmp_path):
-    """All CLI options are forwarded to run_foreground."""
-    cfg = tmp_path / "ralph.yaml"
-    cfg.write_text(
-        "max_iterations: 1\nloop:\n  - step_name: w\n    task_prompt: W\n    system_prompt: S\n"
-    )
-    mock_fg.side_effect = SystemExit(0)
-
-    runner.invoke(
-        app,
-        [
-            "run",
-            "my task",
-            "--config",
-            str(cfg),
-            "--max-iterations",
-            "5",
-            "--default-model",
-            "sonnet",
-            "--state-dir",
-            "/tmp/test",
-            "-f",
-        ],
-    )
-    mock_fg.assert_called_once()
-    kwargs = mock_fg.call_args.kwargs
-    assert kwargs["task"] == "my task"
-    assert kwargs["config_path"] == str(cfg)
-    assert kwargs["max_iterations"] == 5
-    assert kwargs["default_model"] == "sonnet"
-    assert kwargs["state_dir"] == "/tmp/test"
-    assert kwargs["force"] is True
-
-
-@patch("ralphkit.engine.run_foreground")
-def test_run_no_task_for_pipe_mode(mock_fg):
-    """run with no task argument passes None."""
-    mock_fg.side_effect = SystemExit(0)
-    runner.invoke(app, ["run"])
-    mock_fg.assert_called_once()
-    assert mock_fg.call_args.kwargs["task"] is None
-
-
-@patch("ralphkit.engine.run_foreground")
-def test_run_plan_flags_forwarded(mock_fg, tmp_path):
-    """--plan, --plan-only, --plan-model are forwarded."""
-    plan_file = tmp_path / "tickets.json"
-    plan_file.write_text('{"items": []}')
-    mock_fg.side_effect = SystemExit(0)
-
-    runner.invoke(
-        app,
-        [
-            "run",
-            "my task",
-            "--plan",
-            str(plan_file),
-            "--plan-only",
-            "--plan-model",
-            "sonnet",
-            "-f",
-        ],
-    )
-    mock_fg.assert_called_once()
-    kwargs = mock_fg.call_args.kwargs
-    assert kwargs["plan_path"] == str(plan_file)
-    assert kwargs["plan_only"] is True
-    assert kwargs["plan_model"] == "sonnet"
-
-
-# -- submit command --
-
-
-@patch("ralphkit.local.shutil.which", return_value="/usr/bin/tmux")
-@patch("ralphkit.local.subprocess.run")
-def test_submit_local(mock_run, mock_which):
-    mock_run.return_value = __import__("subprocess").CompletedProcess(
-        args=[], returncode=0
-    )
-    result = runner.invoke(app, ["submit", "do stuff"])
-    assert result.exit_code == 0
-    assert "Submitted" in result.output
-
-
-@patch("ralphkit.remote.subprocess.run")
-def test_submit_remote(mock_run):
-    mock_run.return_value = __import__("subprocess").CompletedProcess(
-        args=[], returncode=0, stdout="", stderr=""
-    )
-    result = runner.invoke(app, ["submit", "do stuff", "--host", "dev.example.com"])
-    assert result.exit_code == 0
-    assert "Submitted" in result.output
-    assert "dev.example.com" in result.output
-
-
-@patch("ralphkit.remote.subprocess.run")
-def test_submit_remote_resolves_task_file(mock_run, tmp_path):
-    """Task .md files are read locally and content is sent to remote."""
-    mock_run.return_value = __import__("subprocess").CompletedProcess(
-        args=[], returncode=0, stdout="", stderr=""
-    )
-    task_file = tmp_path / "task.md"
-    task_file.write_text("# Refactor auth\nDo the thing.")
-
-    result = runner.invoke(app, ["submit", str(task_file), "--host", "dev.example.com"])
-    assert result.exit_code == 0
-    # The uploaded script should contain the file content, not the file path
-    calls = mock_run.call_args_list
-    # Find the script upload call (has input= with script content)
-    script_content = None
-    for call in calls:
-        inp = call[1].get("input", "")
-        if inp and "ralphkit run" in inp:
-            script_content = inp
-            break
-    assert script_content is not None
-    assert "Refactor auth" in script_content
-    assert str(task_file) not in script_content
 
 
 # -- jobs command --
