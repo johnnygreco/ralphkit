@@ -6,12 +6,10 @@
 
 Agent pipes and loops for [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
-Run `ralphkit` with two modes:
+Purpose-built subcommands for common developer workflows, plus generic `pipe` and `loop` primitives for custom configs.
 
 - **Loop** — plan-driven iteration. Creates a structured plan, then iterates one item at a time until all are complete.
 - **Pipe** — linear sequence. Each step runs once, passing context forward via handoff files.
-
-The mode is auto-detected from your config. Just `ralphkit "your task"` to get started.
 
 Inspired by the [ralph loop](https://ghuntley.com/loop/).
 
@@ -30,103 +28,123 @@ uv tool install ralphkit
 Or run directly without installing:
 
 ```bash
-uvx ralphkit "your task here" --config ralphkit.yaml
+uvx ralphkit build "your task here"
 ```
 
 ## Quick Start
 
-### Loop (default)
+```bash
+# Build a feature (plan-driven loop)
+ralphkit build "Add unit tests for the auth module"
+
+# Fix a bug (diagnose → fix → verify pipeline)
+ralphkit fix "Login fails when email contains a plus sign"
+
+# Research a topic (explore → synthesize → report pipeline)
+ralphkit research "How does the caching layer work?"
+
+# Plan an implementation (analyze → design document)
+ralphkit plan "Add rate limiting to the API"
+
+# Tackle something ambitious (research → plan → build → review → fix → verify)
+ralphkit big-swing "Rewrite the database layer to use async"
+
+# Generic primitives with custom YAML configs
+ralphkit pipe "refactor auth" --config pipe.yaml
+ralphkit loop "add tests" --config loop.yaml
+```
+
+## Subcommands
+
+### `build` (loop)
+
+Plan-driven iteration: plan → build → review, repeating until all items are complete.
 
 ```bash
-# Run with built-in defaults (no config needed)
-ralphkit "Add unit tests for the auth module"
-
-# Generate plan only — review/edit before committing to a full run
-ralphkit "Add unit tests for the auth module" --plan-only
-
-# Skip planning — provide your own tickets.json
-ralphkit "Add unit tests for the auth module" --plan my-tickets.json
-
-# With a custom config
-ralphkit "Refactor the database layer" --config configs/example.yaml
+ralphkit build "Add unit tests for the auth module"
+ralphkit build task.md --plan-only                    # generate plan only
+ralphkit build task.md --plan my-tickets.json         # skip planning
+ralphkit build task.md --max-iterations 5 -f          # override iterations, skip prompt
+ralphkit build task.md --plan-model sonnet             # cheaper planning model
 ```
-
-### Pipe
-
-```bash
-# Run a pipe config (task is optional)
-ralphkit --config configs/example-pipe.yaml
-
-# Pipe with a task input (available as {task} in prompts)
-ralphkit "refactor auth module" --config configs/example-pipe.yaml
-```
-
-## Usage
-
-### Foreground (default)
-
-```
-ralphkit [run] TASK [OPTIONS]
-```
-
-The `run` subcommand is implicit — `ralphkit "your task"` is equivalent to `ralphkit run "your task"`.
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `TASK` | Task description (string or path to `.md` file) | required for loop, optional for pipe |
-| `--config PATH` / `-c` | Path to YAML config file | built-in loop defaults |
-| `--max-iterations N` | Override max iterations (loop only) | 10 |
+| `TASK` | Task description (string or path to `.md` file) | required |
+| `--max-iterations N` | Override max iterations | 10 |
 | `--default-model MODEL` | Override default model | opus |
-| `--plan PATH` | Path to pre-made tickets.json (skips planning step) | — |
-| `--plan-only` | Generate plan and exit without running the loop | off |
-| `--plan-model MODEL` | Override model for the planning step | default model |
+| `--plan PATH` | Path to pre-made tickets.json (skips planning) | — |
+| `--plan-only` | Generate plan and exit | off |
+| `--plan-model MODEL` | Override model for planning step | default model |
 | `--state-dir DIR` | Override state directory | .ralphkit |
 | `-f` / `--force` | Skip confirmation prompt | off |
 
+### `fix` (pipe, 3 steps)
+
+Diagnose → fix → verify pipeline for bug fixes.
+
 ```bash
-# No config — uses built-in plan-driven loop
-ralphkit "Add unit tests for the auth module"
-
-# Task from a markdown file
-ralphkit task.md --config ralphkit.yaml
-
-# Generate plan only, review it, then run
-ralphkit "Add auth" --plan-only -f
-# ... edit .ralphkit/runs/001/tickets.json ...
-ralphkit "Add auth" --plan .ralphkit/runs/001/tickets.json -f
-
-# Use a cheaper model for planning
-ralphkit "Add auth" --plan-model sonnet
-
-# Override max iterations and skip confirmation
-ralphkit "Fix the flaky CI tests" --max-iterations 5 -f
-
-# Pipe with no task
-ralphkit --config pipe.yaml -f
-
-# Pipe with a task
-ralphkit "analyze auth" --config pipe.yaml
-
-# Combinations
-ralphkit task.md --plan-model sonnet --max-iterations 8 --default-model sonnet -f
+ralphkit fix "Login fails when email contains a plus sign"
 ```
 
-### Background Jobs
+### `research` (pipe, 3 steps)
 
-```
-ralphkit submit TASK [OPTIONS]
+Explore → synthesize → report pipeline for codebase research.
+
+```bash
+ralphkit research "How does the caching layer work?"
 ```
 
-Submit a task to run in a detached tmux session (locally or on a remote host).
+### `plan` (pipe, 2 steps)
+
+Analyze → design document pipeline for implementation planning.
+
+```bash
+ralphkit plan "Add rate limiting to the API"
+```
+
+### `big-swing` (pipe, 6 steps)
+
+Research → plan → build → review → fix → verify pipeline for ambitious tasks.
+
+```bash
+ralphkit big-swing "Rewrite the database layer to use async"
+```
+
+### `pipe` and `loop` (generic primitives)
+
+Run custom workflows from YAML config files. `--config` is required.
+
+```bash
+ralphkit pipe "refactor auth" --config pipe.yaml
+ralphkit loop "add tests" --config loop.yaml
+ralphkit loop task.md --config loop.yaml --max-iterations 5
+```
+
+All pipe-based subcommands (`fix`, `research`, `plan`, `big-swing`) share: `--default-model`, `--state-dir`, `--host`, `-f/--force`.
+
+## Background Jobs (`--host`)
+
+Any workflow command accepts `--host` to run as a background job:
+
+```bash
+# Local tmux background
+ralphkit build task.md --host local
+
+# Remote host via SSH + tmux
+ralphkit build task.md --host mini
+ralphkit big-swing epic.md --host mini --working-dir /path/to/project
+ralphkit fix bug.md --host mini --ralph-version 0.5.0
+```
 
 | Option | Description |
 |--------|-------------|
-| `--host NAME` / `-H` | Run on a remote SSH host (from `~/.ssh/config`) |
+| `--host local` | Run in a local detached tmux session |
+| `--host NAME` | Run on a remote SSH host (from `~/.ssh/config`) |
 | `--working-dir PATH` | Working directory for the job |
-| `--attach` | Attach to the tmux session after submitting |
 | `--ralph-version VER` | Pin ralphkit version for remote execution |
-| `--allow-prerelease` | Allow prerelease versions for remote uvx |
-| All `run` options | `--config`, `--max-iterations`, `--default-model`, `--state-dir` |
+
+`--force` is auto-injected when `--host` is provided (background jobs always skip confirmation).
 
 ### Job Management
 
@@ -134,13 +152,12 @@ Submit a task to run in a detached tmux session (locally or on a remote host).
 ralphkit jobs [--host NAME]            # List active jobs
 ralphkit logs JOB_ID [--host NAME]     # View job logs (-F to follow)
 ralphkit cancel JOB_ID [--host NAME]   # Cancel a running job
-ralphkit attach JOB_ID [--host NAME]   # Attach to a job's tmux session
 ralphkit runs                          # List past completed runs
 ```
 
 ## Config
 
-The config file is optional. Without one, ralphkit uses a built-in loop with a single worker step driven by a plan. The mode is determined by your config: include a `pipe:` section for pipe mode, otherwise it runs as a loop.
+The config file is optional for `pipe` and `loop` generic primitives. The named subcommands (`build`, `fix`, etc.) have built-in configs. The mode is determined by your config: include a `pipe:` section for pipe mode, otherwise it runs as a loop.
 
 ### Loop config
 
@@ -282,7 +299,7 @@ By default, each step gets position-aware handoff instructions appended to its s
 
 ## Remote Execution
 
-Submit jobs to remote machines via SSH + tmux. Useful for offloading long-running tasks to a more remote machine (e.g., a Mac Mini).
+Submit jobs to remote machines via SSH + tmux. Useful for offloading long-running tasks to a remote machine (e.g., a Mac Mini).
 
 ### Setup
 
@@ -295,36 +312,6 @@ Submit jobs to remote machines via SSH + tmux. Useful for offloading long-runnin
    ```
 
 The `--host` flag takes an SSH config name directly — no additional ralphkit config needed. Remote jobs run via `uvx ralphkit@latest`, so ralphkit doesn't need to be pre-installed on the remote host.
-
-### Submitting Remote Jobs
-
-```bash
-# Submit to a remote host
-ralphkit submit "Add unit tests for auth" --host mini
-
-# Override working directory
-ralphkit submit "Fix the build" --host mini --working-dir /path/to/project
-
-# Pin a specific version
-ralphkit submit "Fix the build" --host mini --ralph-version 0.5.0
-
-# Use a prerelease version
-ralphkit submit "Fix the build" --host mini --allow-prerelease
-
-# Submit and immediately attach
-ralphkit submit "Refactor database layer" --host mini --attach
-
-# Check status
-ralphkit jobs --host mini
-
-# Stream logs
-ralphkit logs rk-add-unit-tests-0307-1430-a1b2 --host mini -F
-
-# Attach to the tmux session
-ralphkit attach rk-add-unit-tests-0307-1430-a1b2 --host mini
-```
-
-Remote jobs persist in tmux sessions on the remote host. If your SSH connection drops, the job continues running — reconnect with `ralphkit attach`.
 
 ## Run Reports
 
@@ -382,5 +369,5 @@ Pipe state files:
 
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`claude` must be on your PATH)
 - Python 3.10+
-- [tmux](https://github.com/tmux/tmux) (required for `submit` — both locally and on remote hosts)
+- [tmux](https://github.com/tmux/tmux) (required for `--host` background jobs — both locally and on remote hosts)
 - SSH access to remote hosts (for remote execution only)

@@ -22,7 +22,7 @@ def _check_tmux() -> None:
 def submit_local(
     job_id: str,
     ralph_args: list[str],
-    subcommand: str = "run",
+    subcommand: str,
     working_dir: str | None = None,
 ) -> None:
     """Launch a ralphkit job in a local detached tmux session."""

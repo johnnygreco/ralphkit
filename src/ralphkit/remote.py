@@ -54,7 +54,8 @@ def _is_prerelease(version: str) -> bool:
 def _ralph_cmd(
     ralph_args: list[str],
     ralph_version: str | None = None,
-    subcommand: str = "run",
+    *,
+    subcommand: str,
 ) -> str:
     """Build the uvx ralphkit command string."""
     pkg = f"ralphkit=={ralph_version}" if ralph_version else "ralphkit@latest"
@@ -69,7 +70,7 @@ def submit_job(
     host: str,
     job_id: str,
     ralph_args: list[str],
-    subcommand: str = "run",
+    subcommand: str,
     working_dir: str | None = None,
     ralph_version: str | None = None,
     config_content: str | None = None,

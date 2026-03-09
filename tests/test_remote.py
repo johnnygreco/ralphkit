@@ -18,29 +18,29 @@ _OK = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
 
 def test_ralph_cmd_default():
-    cmd = _ralph_cmd(["--model", "opus", "do stuff"])
+    cmd = _ralph_cmd(["--model", "opus", "do stuff"], subcommand="build")
     assert (
         cmd
-        == "uvx --refresh --from ralphkit@latest ralphkit run --model opus 'do stuff'"
+        == "uvx --refresh --from ralphkit@latest ralphkit build --model opus 'do stuff'"
     )
 
 
 def test_ralph_cmd_with_version():
-    cmd = _ralph_cmd(["do stuff"], ralph_version="0.5.0")
-    assert cmd == "uvx --refresh --from ralphkit==0.5.0 ralphkit run 'do stuff'"
+    cmd = _ralph_cmd(["do stuff"], ralph_version="0.5.0", subcommand="fix")
+    assert cmd == "uvx --refresh --from ralphkit==0.5.0 ralphkit fix 'do stuff'"
 
 
 def test_ralph_cmd_auto_detects_prerelease():
-    cmd = _ralph_cmd(["do stuff"], ralph_version="0.6.0a1")
+    cmd = _ralph_cmd(["do stuff"], ralph_version="0.6.0a1", subcommand="build")
     assert (
         cmd
-        == "uvx --refresh --from ralphkit==0.6.0a1 --prerelease allow ralphkit run 'do stuff'"
+        == "uvx --refresh --from ralphkit==0.6.0a1 --prerelease allow ralphkit build 'do stuff'"
     )
 
 
 def test_ralph_cmd_no_prerelease_for_stable():
-    cmd = _ralph_cmd(["do stuff"], ralph_version="0.6.0")
-    assert cmd == "uvx --refresh --from ralphkit==0.6.0 ralphkit run 'do stuff'"
+    cmd = _ralph_cmd(["do stuff"], ralph_version="0.6.0", subcommand="build")
+    assert cmd == "uvx --refresh --from ralphkit==0.6.0 ralphkit build 'do stuff'"
 
 
 def test_ralph_cmd_with_subcommand():
@@ -77,7 +77,7 @@ def test_is_prerelease(version, expected):
 @patch("ralphkit.remote.subprocess.run")
 def test_submit_job_full_flow(mock_run):
     mock_run.return_value = _OK
-    submit_job("dev.example.com", "rk-abc123", ["--model", "opus", "do stuff"])
+    submit_job("dev.example.com", "rk-abc123", ["--model", "opus", "do stuff"], subcommand="build")
 
     calls = mock_run.call_args_list
     # SSH args are ["ssh", "-o", "ConnectTimeout=10", host, cmd] so cmd is at index 4
@@ -95,7 +95,7 @@ def test_submit_job_full_flow(mock_run):
 @patch("ralphkit.remote.subprocess.run")
 def test_submit_job_with_working_dir(mock_run):
     mock_run.return_value = _OK
-    submit_job("dev.example.com", "rk-abc123", ["do stuff"], working_dir="/opt/app")
+    submit_job("dev.example.com", "rk-abc123", ["do stuff"], subcommand="build", working_dir="/opt/app")
 
     calls = mock_run.call_args_list
     # Pre-flight: tmux check
@@ -109,7 +109,7 @@ def test_submit_job_with_working_dir(mock_run):
 @patch("ralphkit.remote.subprocess.run")
 def test_submit_job_with_ralph_version(mock_run):
     mock_run.return_value = _OK
-    submit_job("dev.example.com", "rk-abc123", ["do stuff"], ralph_version="0.5.0")
+    submit_job("dev.example.com", "rk-abc123", ["do stuff"], subcommand="build", ralph_version="0.5.0")
 
     calls = mock_run.call_args_list
     # The uploaded script should contain uvx --from ralphkit==0.5.0
@@ -126,6 +126,7 @@ def test_submit_job_with_config_content(mock_run):
         "dev.example.com",
         "rk-abc123",
         ["do stuff"],
+        subcommand="loop",
         config_content="max_iterations: 3\nloop:\n  - step_name: w\n",
     )
 
@@ -165,7 +166,7 @@ def test_submit_job_no_tmux(mock_run):
         args=[], returncode=1, stdout="", stderr=""
     )
     with pytest.raises(SystemExit, match="tmux is not installed"):
-        submit_job("dev.example.com", "rk-abc123", ["do stuff"])
+        submit_job("dev.example.com", "rk-abc123", ["do stuff"], subcommand="build")
 
 
 @patch("ralphkit.remote.subprocess.run")
@@ -176,7 +177,7 @@ def test_submit_job_working_dir_missing(mock_run):
     ]
     with pytest.raises(SystemExit, match="Working directory does not exist"):
         submit_job(
-            "dev.example.com", "rk-abc123", ["do stuff"], working_dir="/bad/path"
+            "dev.example.com", "rk-abc123", ["do stuff"], subcommand="build", working_dir="/bad/path"
         )
 
 
