@@ -103,7 +103,7 @@ def _dispatch(
     force: bool,
     default_model: str | None = None,
     state_dir: str | None = None,
-    ralph_config: RalphConfig | None = None,
+    ralph_config: "RalphConfig | None" = None,
     config_file: Path | None = None,
     max_iterations: int | None = None,
     plan_path: str | None = None,
@@ -211,7 +211,7 @@ def _dispatch(
 def _pipe_workflow(
     subcommand: str,
     task: str,
-    steps_factory: Callable[[], list[StepConfig]],
+    steps_factory: "Callable[[], list[StepConfig]]",
     *,
     default_model: str | None,
     state_dir: str | None,
