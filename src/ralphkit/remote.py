@@ -55,12 +55,12 @@ def _ralph_cmd(
     ralph_args: list[str],
     ralph_version: str | None = None,
 ) -> str:
-    """Build the uvx ralph command string."""
+    """Build the uvx ralphkit command string."""
     pkg = f"ralphkit=={ralph_version}" if ralph_version else "ralphkit@latest"
     parts = ["uvx", "--refresh", "--from", shlex.quote(pkg)]
     if ralph_version and _is_prerelease(ralph_version):
         parts += ["--prerelease", "allow"]
-    parts += ["ralph", "run"]
+    parts += ["ralphkit", "run"]
     return " ".join(parts) + " " + shlex.join(ralph_args)
 
 
@@ -72,7 +72,7 @@ def submit_job(
     ralph_version: str | None = None,
     config_content: str | None = None,
 ) -> None:
-    """Submit a ralph job to a remote host via SSH + tmux."""
+    """Submit a ralphkit job to a remote host via SSH + tmux."""
     # Pre-flight: tmux available?
     result = _ssh_run(host, "command -v tmux", check=False, login_shell=True)
     if result.returncode != 0:
@@ -157,5 +157,5 @@ def cancel_job(host: str, job_id: str) -> None:
     if result.returncode != 0:
         raise SystemExit(
             f"No job '{job_id}' found on '{host}'.\n"
-            f"  Run 'ralph jobs --host {host}' to list active jobs."
+            f"  Run 'ralphkit jobs --host {host}' to list active jobs."
         )

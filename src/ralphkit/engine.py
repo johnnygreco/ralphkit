@@ -144,7 +144,7 @@ def run_foreground(
     plan_only: bool = False,
     plan_model: str | None = None,
 ) -> None:
-    """Run a ralph task in the foreground (pipe or loop mode)."""
+    """Run a ralphkit task in the foreground (pipe or loop mode)."""
     try:
         config = load_config(config_path)
     except ValueError as e:

@@ -24,7 +24,7 @@ def build_job_script(
     ralph_cmd: str,
     working_dir: str | None = None,
 ) -> str:
-    """Generate a bash script for a ralph job."""
+    """Generate a bash script for a ralphkit job."""
     lines = [
         "#!/usr/bin/env bash",
         "set -uo pipefail",

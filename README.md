@@ -6,12 +6,12 @@
 
 Agent pipes and loops for [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
-Run `ralph` with two modes:
+Run `ralphkit` with two modes:
 
 - **Loop** — plan-driven iteration. Creates a structured plan, then iterates one item at a time until all are complete.
 - **Pipe** — linear sequence. Each step runs once, passing context forward via handoff files.
 
-The mode is auto-detected from your config. Just `ralph "your task"` to get started.
+The mode is auto-detected from your config. Just `ralphkit "your task"` to get started.
 
 Inspired by the [ralph loop](https://ghuntley.com/loop/).
 
@@ -30,7 +30,7 @@ uv tool install ralphkit
 Or run directly without installing:
 
 ```bash
-uvx --from ralphkit ralph "your task here" --config ralph.yaml
+uvx ralphkit "your task here" --config ralphkit.yaml
 ```
 
 ## Quick Start
@@ -39,26 +39,26 @@ uvx --from ralphkit ralph "your task here" --config ralph.yaml
 
 ```bash
 # Run with built-in defaults (no config needed)
-ralph "Add unit tests for the auth module"
+ralphkit "Add unit tests for the auth module"
 
 # Generate plan only — review/edit before committing to a full run
-ralph "Add unit tests for the auth module" --plan-only
+ralphkit "Add unit tests for the auth module" --plan-only
 
 # Skip planning — provide your own tickets.json
-ralph "Add unit tests for the auth module" --plan my-tickets.json
+ralphkit "Add unit tests for the auth module" --plan my-tickets.json
 
 # With a custom config
-ralph "Refactor the database layer" --config configs/example.yaml
+ralphkit "Refactor the database layer" --config configs/example.yaml
 ```
 
 ### Pipe
 
 ```bash
 # Run a pipe config (task is optional)
-ralph --config configs/example-pipe.yaml
+ralphkit --config configs/example-pipe.yaml
 
 # Pipe with a task input (available as {task} in prompts)
-ralph "refactor auth module" --config configs/example-pipe.yaml
+ralphkit "refactor auth module" --config configs/example-pipe.yaml
 ```
 
 ## Usage
@@ -66,10 +66,10 @@ ralph "refactor auth module" --config configs/example-pipe.yaml
 ### Foreground (default)
 
 ```
-ralph [run] TASK [OPTIONS]
+ralphkit [run] TASK [OPTIONS]
 ```
 
-The `run` subcommand is implicit — `ralph "your task"` is equivalent to `ralph run "your task"`.
+The `run` subcommand is implicit — `ralphkit "your task"` is equivalent to `ralphkit run "your task"`.
 
 | Option | Description | Default |
 |--------|-------------|---------|
@@ -85,36 +85,36 @@ The `run` subcommand is implicit — `ralph "your task"` is equivalent to `ralph
 
 ```bash
 # No config — uses built-in plan-driven loop
-ralph "Add unit tests for the auth module"
+ralphkit "Add unit tests for the auth module"
 
 # Task from a markdown file
-ralph task.md --config ralph.yaml
+ralphkit task.md --config ralphkit.yaml
 
 # Generate plan only, review it, then run
-ralph "Add auth" --plan-only -f
+ralphkit "Add auth" --plan-only -f
 # ... edit .ralphkit/runs/001/tickets.json ...
-ralph "Add auth" --plan .ralphkit/runs/001/tickets.json -f
+ralphkit "Add auth" --plan .ralphkit/runs/001/tickets.json -f
 
 # Use a cheaper model for planning
-ralph "Add auth" --plan-model sonnet
+ralphkit "Add auth" --plan-model sonnet
 
 # Override max iterations and skip confirmation
-ralph "Fix the flaky CI tests" --max-iterations 5 -f
+ralphkit "Fix the flaky CI tests" --max-iterations 5 -f
 
 # Pipe with no task
-ralph --config pipe.yaml -f
+ralphkit --config pipe.yaml -f
 
 # Pipe with a task
-ralph "analyze auth" --config pipe.yaml
+ralphkit "analyze auth" --config pipe.yaml
 
 # Combinations
-ralph task.md --plan-model sonnet --max-iterations 8 --default-model sonnet -f
+ralphkit task.md --plan-model sonnet --max-iterations 8 --default-model sonnet -f
 ```
 
 ### Background Jobs
 
 ```
-ralph submit TASK [OPTIONS]
+ralphkit submit TASK [OPTIONS]
 ```
 
 Submit a task to run in a detached tmux session (locally or on a remote host).
@@ -131,11 +131,11 @@ Submit a task to run in a detached tmux session (locally or on a remote host).
 ### Job Management
 
 ```bash
-ralph jobs [--host NAME]            # List active jobs
-ralph logs JOB_ID [--host NAME]     # View job logs (-F to follow)
-ralph cancel JOB_ID [--host NAME]   # Cancel a running job
-ralph attach JOB_ID [--host NAME]   # Attach to a job's tmux session
-ralph runs                          # List past completed runs
+ralphkit jobs [--host NAME]            # List active jobs
+ralphkit logs JOB_ID [--host NAME]     # View job logs (-F to follow)
+ralphkit cancel JOB_ID [--host NAME]   # Cancel a running job
+ralphkit attach JOB_ID [--host NAME]   # Attach to a job's tmux session
+ralphkit runs                          # List past completed runs
 ```
 
 ## Config
@@ -294,37 +294,37 @@ Submit jobs to remote machines via SSH + tmux. Useful for offloading long-runnin
      User donnie
    ```
 
-The `--host` flag takes an SSH config name directly — no additional ralphkit config needed. Remote jobs run via `uvx --from ralphkit@latest ralph`, so ralphkit doesn't need to be pre-installed on the remote host.
+The `--host` flag takes an SSH config name directly — no additional ralphkit config needed. Remote jobs run via `uvx ralphkit@latest`, so ralphkit doesn't need to be pre-installed on the remote host.
 
 ### Submitting Remote Jobs
 
 ```bash
 # Submit to a remote host
-ralph submit "Add unit tests for auth" --host mini
+ralphkit submit "Add unit tests for auth" --host mini
 
 # Override working directory
-ralph submit "Fix the build" --host mini --working-dir /path/to/project
+ralphkit submit "Fix the build" --host mini --working-dir /path/to/project
 
 # Pin a specific version
-ralph submit "Fix the build" --host mini --ralph-version 0.5.0
+ralphkit submit "Fix the build" --host mini --ralph-version 0.5.0
 
 # Use a prerelease version
-ralph submit "Fix the build" --host mini --allow-prerelease
+ralphkit submit "Fix the build" --host mini --allow-prerelease
 
 # Submit and immediately attach
-ralph submit "Refactor database layer" --host mini --attach
+ralphkit submit "Refactor database layer" --host mini --attach
 
 # Check status
-ralph jobs --host mini
+ralphkit jobs --host mini
 
 # Stream logs
-ralph logs rk-add-unit-tests-0307-1430-a1b2 --host mini -F
+ralphkit logs rk-add-unit-tests-0307-1430-a1b2 --host mini -F
 
 # Attach to the tmux session
-ralph attach rk-add-unit-tests-0307-1430-a1b2 --host mini
+ralphkit attach rk-add-unit-tests-0307-1430-a1b2 --host mini
 ```
 
-Remote jobs persist in tmux sessions on the remote host. If your SSH connection drops, the job continues running — reconnect with `ralph attach`.
+Remote jobs persist in tmux sessions on the remote host. If your SSH connection drops, the job continues running — reconnect with `ralphkit attach`.
 
 ## Run Reports
 
@@ -338,7 +338,7 @@ After each run, ralphkit prints a summary and saves `report.json` to the run dir
 - Turn count per step
 
 ```bash
-ralph runs                         # list previous runs with plan progress
+ralphkit runs                         # list previous runs with plan progress
 cat .ralphkit/runs/001/report.json # inspect a specific report
 ```
 
@@ -356,7 +356,7 @@ Each run gets its own numbered directory under `.ralphkit/runs/`. A `current` sy
     003/                     # active run
 ```
 
-Previous runs are preserved automatically. Use `ralph runs` to see them.
+Previous runs are preserved automatically. Use `ralphkit runs` to see them.
 
 Loop state files:
 

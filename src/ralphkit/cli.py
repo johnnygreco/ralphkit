@@ -8,7 +8,7 @@ from ralphkit.ui import console
 
 
 class RalphGroup(TyperGroup):
-    """Custom group that routes bare `ralph "task"` to `ralph run "task"`."""
+    """Custom group that routes bare `ralphkit "task"` to `ralphkit run "task"`."""
 
     def parse_args(self, ctx, args):
         if args and args[0] not in self.commands and not args[0].startswith("-"):
@@ -171,7 +171,7 @@ def _build_ralph_args(
     default_model: str | None,
     state_dir: str | None,
 ) -> list[str]:
-    """Build argument list for ralph run."""
+    """Build argument list for ralphkit run."""
     args = [task] if task else []
     if config:
         args += ["--config", str(config.resolve())]
@@ -200,7 +200,7 @@ def _print_submit_info(
         console.print(f"  [dim]Attach:[/]    ssh -t {host} tmux attach -t {job_id}")
     else:
         console.print(f"  [dim]Attach:[/]    tmux attach -t {job_id}")
-    console.print(f"  [dim]Logs:[/]      ralph logs {job_id}{host_flag}")
+    console.print(f"  [dim]Logs:[/]      ralphkit logs {job_id}{host_flag}")
     console.print()
 
 
