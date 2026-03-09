@@ -18,29 +18,39 @@ _OK = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
 
 def test_ralph_cmd_default():
-    cmd = _ralph_cmd(["--model", "opus", "do stuff"])
+    cmd = _ralph_cmd(["--model", "opus", "do stuff"], subcommand="build")
     assert (
         cmd
-        == "uvx --refresh --from ralphkit@latest ralphkit run --model opus 'do stuff'"
+        == "uvx --refresh --from ralphkit@latest ralphkit build --model opus 'do stuff'"
     )
 
 
 def test_ralph_cmd_with_version():
-    cmd = _ralph_cmd(["do stuff"], ralph_version="0.5.0")
-    assert cmd == "uvx --refresh --from ralphkit==0.5.0 ralphkit run 'do stuff'"
+    cmd = _ralph_cmd(["do stuff"], ralph_version="0.5.0", subcommand="fix")
+    assert cmd == "uvx --refresh --from ralphkit==0.5.0 ralphkit fix 'do stuff'"
 
 
 def test_ralph_cmd_auto_detects_prerelease():
-    cmd = _ralph_cmd(["do stuff"], ralph_version="0.6.0a1")
+    cmd = _ralph_cmd(["do stuff"], ralph_version="0.6.0a1", subcommand="build")
     assert (
         cmd
-        == "uvx --refresh --from ralphkit==0.6.0a1 --prerelease allow ralphkit run 'do stuff'"
+        == "uvx --refresh --from ralphkit==0.6.0a1 --prerelease allow ralphkit build 'do stuff'"
     )
 
 
 def test_ralph_cmd_no_prerelease_for_stable():
-    cmd = _ralph_cmd(["do stuff"], ralph_version="0.6.0")
-    assert cmd == "uvx --refresh --from ralphkit==0.6.0 ralphkit run 'do stuff'"
+    cmd = _ralph_cmd(["do stuff"], ralph_version="0.6.0", subcommand="build")
+    assert cmd == "uvx --refresh --from ralphkit==0.6.0 ralphkit build 'do stuff'"
+
+
+def test_ralph_cmd_with_subcommand():
+    cmd = _ralph_cmd(["task.md", "--force"], subcommand="build")
+    assert cmd == "uvx --refresh --from ralphkit@latest ralphkit build task.md --force"
+
+
+def test_ralph_cmd_with_subcommand_and_version():
+    cmd = _ralph_cmd(["task.md"], ralph_version="0.5.0", subcommand="fix")
+    assert cmd == "uvx --refresh --from ralphkit==0.5.0 ralphkit fix task.md"
 
 
 @pytest.mark.parametrize(
@@ -64,44 +74,63 @@ def test_is_prerelease(version, expected):
 @patch("ralphkit.remote.subprocess.run")
 def test_submit_job_full_flow(mock_run):
     mock_run.return_value = _OK
-    submit_job("dev.example.com", "rk-abc123", ["--model", "opus", "do stuff"])
+    submit_job(
+        "dev.example.com",
+        "rk-abc123",
+        ["--model", "opus", "do stuff"],
+        subcommand="build",
+    )
 
     calls = mock_run.call_args_list
     # SSH args are ["ssh", "-o", "ConnectTimeout=10", host, cmd] so cmd is at index 4
     # Pre-flight: tmux check
     assert "command -v tmux" in calls[0][0][0][4]
-    # Upload script (includes mkdir -p)
+    # mkdir -p (once, before uploads)
     assert "mkdir -p" in calls[1][0][0][4]
-    assert "cat >" in calls[1][0][0][4]
+    # Upload script (no mkdir -p)
+    assert "mkdir -p" not in calls[2][0][0][4]
+    assert "cat >" in calls[2][0][0][4]
     # Launch tmux
-    assert "tmux new-session" in calls[2][0][0][4]
-    assert "remain-on-exit" in calls[2][0][0][4]
-    assert len(calls) == 3
+    assert "tmux new-session" in calls[3][0][0][4]
+    assert "remain-on-exit" in calls[3][0][0][4]
+    assert len(calls) == 4
 
 
 @patch("ralphkit.remote.subprocess.run")
 def test_submit_job_with_working_dir(mock_run):
     mock_run.return_value = _OK
-    submit_job("dev.example.com", "rk-abc123", ["do stuff"], working_dir="/opt/app")
+    submit_job(
+        "dev.example.com",
+        "rk-abc123",
+        ["do stuff"],
+        subcommand="build",
+        working_dir="/opt/app",
+    )
 
     calls = mock_run.call_args_list
     # Pre-flight: tmux check
     assert "command -v tmux" in calls[0][0][0][4]
     # Pre-flight: working dir check
     assert "/opt/app" in calls[1][0][0][4]
-    # Upload + launch = 4 calls total
-    assert len(calls) == 4
+    # mkdir -p, upload script, launch = 5 calls total
+    assert len(calls) == 5
 
 
 @patch("ralphkit.remote.subprocess.run")
 def test_submit_job_with_ralph_version(mock_run):
     mock_run.return_value = _OK
-    submit_job("dev.example.com", "rk-abc123", ["do stuff"], ralph_version="0.5.0")
+    submit_job(
+        "dev.example.com",
+        "rk-abc123",
+        ["do stuff"],
+        subcommand="build",
+        ralph_version="0.5.0",
+    )
 
     calls = mock_run.call_args_list
     # The uploaded script should contain uvx --from ralphkit==0.5.0
-    # calls[0]=tmux check, calls[1]=upload script (includes mkdir)
-    upload_call = calls[1]
+    # calls[0]=tmux check, calls[1]=mkdir, calls[2]=upload script
+    upload_call = calls[2]
     script_content = upload_call[1]["input"]
     assert "uvx --refresh --from ralphkit==0.5.0 ralphkit" in script_content
 
@@ -113,22 +142,61 @@ def test_submit_job_with_config_content(mock_run):
         "dev.example.com",
         "rk-abc123",
         ["do stuff"],
+        subcommand="loop",
         config_content="max_iterations: 3\nloop:\n  - step_name: w\n",
     )
 
     calls = mock_run.call_args_list
-    # calls: tmux check, config upload (with mkdir), script upload (with mkdir), tmux launch
-    assert len(calls) == 4
-    # Config upload
-    config_call = calls[1]
+    # calls: tmux check, mkdir, config upload, script upload, tmux launch
+    assert len(calls) == 5
+    # mkdir -p (once)
+    assert "mkdir -p" in calls[1][0][0][4]
+    # Config upload (no mkdir -p)
+    config_call = calls[2]
     assert "rk-abc123.config.yaml" in config_call[0][0][4]
-    assert "mkdir -p" in config_call[0][0][4]
+    assert "mkdir -p" not in config_call[0][0][4]
     assert config_call[1]["input"] == "max_iterations: 3\nloop:\n  - step_name: w\n"
     # Script should reference the config path
-    script_call = calls[2]
+    script_call = calls[3]
     script_content = script_call[1]["input"]
     assert "--config" in script_content
     assert "rk-abc123.config.yaml" in script_content
+
+
+@patch("ralphkit.remote.subprocess.run")
+def test_submit_job_with_plan_content(mock_run):
+    mock_run.return_value = _OK
+    submit_job(
+        "dev.example.com",
+        "rk-abc123",
+        ["do stuff"],
+        subcommand="build",
+        plan_content='{"items": [{"id": 1, "title": "test", "done": false}]}',
+    )
+    calls = mock_run.call_args_list
+    # calls: tmux check, mkdir, plan upload, script upload, tmux launch
+    assert len(calls) == 5
+    plan_uploads = [
+        c for c in calls if c[1].get("input") and "items" in str(c[1]["input"])
+    ]
+    assert len(plan_uploads) == 1
+    assert "tickets.json" in plan_uploads[0][0][0][4]
+    assert "mkdir -p" not in plan_uploads[0][0][0][4]
+
+
+@patch("ralphkit.remote.subprocess.run")
+def test_submit_job_with_subcommand(mock_run):
+    mock_run.return_value = _OK
+    submit_job(
+        "dev.example.com", "rk-abc123", ["task.md", "--force"], subcommand="build"
+    )
+
+    calls = mock_run.call_args_list
+    # calls[0]=tmux check, calls[1]=mkdir, calls[2]=script upload
+    upload_call = calls[2]
+    script_content = upload_call[1]["input"]
+    assert "ralphkit build task.md --force" in script_content
+    assert "ralphkit run" not in script_content
 
 
 @patch("ralphkit.remote.subprocess.run")
@@ -137,7 +205,7 @@ def test_submit_job_no_tmux(mock_run):
         args=[], returncode=1, stdout="", stderr=""
     )
     with pytest.raises(SystemExit, match="tmux is not installed"):
-        submit_job("dev.example.com", "rk-abc123", ["do stuff"])
+        submit_job("dev.example.com", "rk-abc123", ["do stuff"], subcommand="build")
 
 
 @patch("ralphkit.remote.subprocess.run")
@@ -148,7 +216,11 @@ def test_submit_job_working_dir_missing(mock_run):
     ]
     with pytest.raises(SystemExit, match="Working directory does not exist"):
         submit_job(
-            "dev.example.com", "rk-abc123", ["do stuff"], working_dir="/bad/path"
+            "dev.example.com",
+            "rk-abc123",
+            ["do stuff"],
+            subcommand="build",
+            working_dir="/bad/path",
         )
 
 

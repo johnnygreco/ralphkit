@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,12 +12,18 @@ from ralphkit.engine import (
     _run_phase,
     _step_names,
     _validate_plan,
+    resolve_task,
     run_foreground,
 )
 from ralphkit.config import STATE_DIR, StepConfig
 
 
 # -- Helper --
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes from text."""
+    return re.sub(r"\x1b\[[^m]*m", "", text)
 
 
 def _minimal_config_yaml():
@@ -522,7 +529,7 @@ def test_foreground_shows_run_number(mock_run, monkeypatch, tmp_path, capsys):
     with pytest.raises(SystemExit) as exc_info:
         run_foreground(task="do stuff", config_path=str(cfg), force=True)
     assert exc_info.value.code == 0
-    assert "#001" in capsys.readouterr().out
+    assert "#001" in _strip_ansi(capsys.readouterr().out)
 
 
 @patch("ralphkit.engine.time")
@@ -552,7 +559,7 @@ def test_foreground_shows_step_numbering(
         run_foreground(task="do stuff", config_path=str(cfg), force=True)
     assert exc_info.value.code == 0
 
-    out = capsys.readouterr().out
+    out = _strip_ansi(capsys.readouterr().out)
     assert "[1/2]" in out
     assert "[2/2]" in out
 
@@ -982,3 +989,15 @@ def test_resolve_handoff_falls_back_to_default():
     step = StepConfig(step_name="s", task_prompt="", system_prompt="")
     result = _resolve_handoff(step, None, 1, 1, [step], "dir")
     assert "task.md" in result
+
+
+# -- resolve_task --
+
+
+@patch("ralphkit.engine.print_warning")
+def test_resolve_task_warns_on_missing_md(mock_warn):
+    """resolve_task warns when .md file doesn't exist."""
+    result = resolve_task("nonexistent-file.md")
+    assert result == "nonexistent-file.md"
+    mock_warn.assert_called_once()
+    assert "nonexistent-file.md" in mock_warn.call_args[0][0]

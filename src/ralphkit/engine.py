@@ -5,11 +5,14 @@ from dataclasses import replace
 from pathlib import Path
 
 from ralphkit.config import (
-    DEFAULT_PLANNER_SYSTEM_PROMPT,
-    DEFAULT_PLANNER_TASK_PROMPT,
+    RalphConfig,
     StepConfig,
     load_config,
     resolve_model,
+)
+from ralphkit.prompts import (
+    DEFAULT_PLANNER_SYSTEM_PROMPT,
+    DEFAULT_PLANNER_TASK_PROMPT,
 )
 from ralphkit.report import RunReport, git_diff_stat, print_report
 from ralphkit.runner import run_claude
@@ -47,7 +50,7 @@ def resolve_task(raw: str) -> str:
         try:
             return p.read_text()
         except (FileNotFoundError, OSError):
-            pass
+            print_warning(f"File '{raw}' not found, using as literal task string")
     return raw
 
 
@@ -143,13 +146,17 @@ def run_foreground(
     plan_path: str | None = None,
     plan_only: bool = False,
     plan_model: str | None = None,
+    ralph_config: RalphConfig | None = None,
 ) -> None:
     """Run a ralphkit task in the foreground (pipe or loop mode)."""
-    try:
-        config = load_config(config_path)
-    except ValueError as e:
-        print_error(f"Config error: {e}")
-        sys.exit(1)
+    if ralph_config is not None:
+        config = ralph_config
+    else:
+        try:
+            config = load_config(config_path)
+        except ValueError as e:
+            print_error(f"Config error: {e}")
+            sys.exit(1)
 
     if max_iterations is not None:
         if max_iterations < 1:
@@ -256,8 +263,11 @@ def run_foreground(
             print_report(report)
             report.save(state.path / "report.json")
             console.print(f"  [dim]Saved to {state.path / 'report.json'}[/]")
-        except Exception:
-            pass
+        except Exception as e:
+            try:
+                print_warning(f"Failed to save report: {e}")
+            except Exception:
+                pass
 
     def _record_step(step, model, claude_out, t0, phase, before_diff, iteration=None):
         before_add, before_del = before_diff
@@ -508,8 +518,13 @@ def run_foreground(
                 print_step_start(idx, total_cleanup, step.step_name)
                 before_diff = git_diff_stat()
                 t0 = time.time()
-                model, claude_out = _run_step(step)
-                _record_step(step, model, claude_out, t0, "cleanup", before_diff)
-                print_step_done(fmt_duration(time.time() - t0))
+                try:
+                    model, claude_out = _run_step(step)
+                    _record_step(step, model, claude_out, t0, "cleanup", before_diff)
+                    print_step_done(fmt_duration(time.time() - t0))
+                except SystemExit:
+                    print_warning(
+                        f"Cleanup step '{step.step_name}' failed, continuing..."
+                    )
             console.print()
         _finalize_report()
