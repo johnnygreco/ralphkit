@@ -26,14 +26,14 @@ uv tool install ralphkit
 Write a task file that clearly specifies what needs to be done, then run it:
 
 ```bash
-ralphkit build feature.md    # plan-driven loop: plan → build → review
-ralphkit fix bug.md          # diagnose → fix → verify pipeline
-ralphkit research question.md  # explore → synthesize → report
-ralphkit plan feature.md     # analyze → design document
-ralphkit big-swing epic.md   # research → plan → build → review → fix → verify
+ralphkit build feature.md       # plan-driven loop: plan → build → review
+ralphkit fix bug.md             # diagnose → fix → verify
+ralphkit research question.md   # explore → synthesize → report
+ralphkit plan feature.md        # analyze → design document
+ralphkit big-swing epic.md      # research → plan → build → review → fix → verify
 ```
 
-Task files should be detailed and well-specified — the more context you provide, the better the results. A good task file includes the goal, relevant context, constraints, and acceptance criteria.
+Task files should contain a well-specified description of the work to be done: the goal, relevant context, constraints, and acceptance criteria.
 
 For custom workflows, use the generic primitives with a YAML config:
 
@@ -113,18 +113,18 @@ Each step requires `step_name`, `task_prompt`, and `system_prompt`. Optional: `m
 Any command accepts `--host` to run as a background job via tmux:
 
 ```bash
-ralphkit build task.md --host local               # local tmux session
-ralphkit build task.md --host mini                 # remote host (SSH config name)
+ralphkit build task.md --host local   # local tmux session
+ralphkit build task.md --host mini    # remote host (SSH config name)
 ralphkit big-swing epic.md --host mini --working-dir /path/to/project
 ```
 
 The `--host` flag takes an SSH config name directly — no additional config needed. Remote jobs run via `uvx`, so ralphkit doesn't need to be pre-installed on the remote host.
 
 ```bash
-ralphkit jobs [--host NAME]            # list active jobs
-ralphkit logs JOB_ID [--host NAME]     # view job logs (-F to follow)
-ralphkit cancel JOB_ID [--host NAME]   # cancel a running job
-ralphkit runs                          # list past completed runs
+ralphkit jobs [--host NAME]             # list active jobs
+ralphkit logs JOB_ID [--host NAME]      # view job logs (-F to follow)
+ralphkit cancel JOB_ID [--host NAME]    # cancel a running job
+ralphkit runs                           # list past completed runs
 ```
 
 ## Requirements
