@@ -2,6 +2,8 @@ import pytest
 
 from ralphkit.config import StepConfig
 from ralphkit.prompts import (
+    PLAN_DESIGN_SYSTEM_PROMPT,
+    RESEARCH_REPORT_SYSTEM_PROMPT,
     make_big_swing_config,
     make_build_config,
     make_fix_config,
@@ -161,3 +163,11 @@ def test_all_prompts_have_state_dir(factory_name, step):
     assert step.system_prompt, (
         f"{factory_name}/{step.step_name} has empty system_prompt"
     )
+
+
+def test_research_report_has_default_output_filename():
+    assert "research-report.md" in RESEARCH_REPORT_SYSTEM_PROMPT
+
+
+def test_plan_design_has_default_output_filename():
+    assert "implementation-plan.md" in PLAN_DESIGN_SYSTEM_PROMPT
