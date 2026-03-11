@@ -48,8 +48,6 @@ ralphkit loop task.md --config loop.yaml
 
 Use `ralphkit <command> --help` to see all available options.
 
-## How It Works
-
 ## Task Files
 
 Each built-in command expects a different kind of brief, but they all follow the same rule:
@@ -71,6 +69,8 @@ In practice, a good task file usually covers:
 - Constraints and non-goals
 - Acceptance criteria
 - Deliverables or output filename, if you care about a specific artifact name
+
+## How It Works
 
 ### Loop
 
