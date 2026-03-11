@@ -34,6 +34,10 @@ ralphkit big-swing epic.md      # research → plan → build → review → fix
 ```
 
 Task files should contain a well-specified description of the work to be done: the goal, relevant context, constraints, and acceptance criteria.
+The built-in workflows own the process. Your task file should describe the work itself, not tell ralphkit how to plan, diagnose, review, or verify it.
+
+Starter task-file templates live in [`templates/tasks/`](/Users/donnie/projects/code/ralphkit/templates/tasks).
+Copy the one that matches the command you want to run and fill in the sections.
 
 For custom workflows, use the generic primitives with a YAML config:
 
@@ -43,6 +47,28 @@ ralphkit loop task.md --config loop.yaml
 ```
 
 Use `ralphkit <command> --help` to see all available options.
+
+## Task Files
+
+Each built-in command expects a different kind of brief, but they all follow the same rule:
+describe the task, not the workflow. ralphkit already knows the flow for `build`, `fix`, `research`,
+`plan`, and `big-swing`.
+
+Use the starter templates in [`templates/tasks/`](/Users/donnie/projects/code/ralphkit/templates/tasks):
+
+- [`build.md`](/Users/donnie/projects/code/ralphkit/templates/tasks/build.md) for feature implementation
+- [`fix.md`](/Users/donnie/projects/code/ralphkit/templates/tasks/fix.md) for bug reports
+- [`research.md`](/Users/donnie/projects/code/ralphkit/templates/tasks/research.md) for codebase research
+- [`plan.md`](/Users/donnie/projects/code/ralphkit/templates/tasks/plan.md) for implementation design docs
+- [`big-swing.md`](/Users/donnie/projects/code/ralphkit/templates/tasks/big-swing.md) for large, multi-phase work
+
+In practice, a good task file usually covers:
+
+- Goal or problem statement
+- Relevant context and existing behavior
+- Constraints and non-goals
+- Acceptance criteria
+- Deliverables or output filename, if you care about a specific artifact name
 
 ## How It Works
 
