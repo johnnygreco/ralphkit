@@ -46,6 +46,37 @@ def test_record_step_with_model_usage():
     assert s.model_usage == claude_out["modelUsage"]
 
 
+def test_record_step_with_failure_fields():
+    report = RunReport()
+    report.record_step(
+        step_name="worker",
+        model="opus",
+        phase="loop",
+        status="timeout",
+        duration_s=5.0,
+        iteration=2,
+        error_kind="hard_timeout",
+        error_message="timed out",
+        timeout_seconds=1800,
+        idle_timeout_seconds=120,
+        diagnostics_path="/tmp/diag.json",
+        claude_transcript_path="/tmp/transcript.jsonl",
+        lines_added=3,
+        lines_deleted=1,
+    )
+    step = report.steps[0]
+    assert step.status == "timeout"
+    assert step.iteration == 2
+    assert step.error_kind == "hard_timeout"
+    assert step.error_message == "timed out"
+    assert step.timeout_seconds == 1800
+    assert step.idle_timeout_seconds == 120
+    assert step.diagnostics_path == "/tmp/diag.json"
+    assert step.claude_transcript_path == "/tmp/transcript.jsonl"
+    assert step.lines_added == 3
+    assert step.lines_deleted == 1
+
+
 def test_record_step_missing_fields():
     claude_out = {"num_turns": 2}
     report = RunReport()
@@ -173,6 +204,44 @@ def test_save_writes_json(tmp_path):
     assert len(data["steps"]) == 1
 
 
+def test_report_round_trip_preserves_failure_summary(tmp_path):
+    report = RunReport()
+    report.outcome = "ERROR"
+    report.iterations_completed = 2
+    report.items_completed = 1
+    report.items_total = 3
+    report.total_duration_s = 12.0
+    report.failure_summary = {
+        "step_name": "worker",
+        "phase": "loop",
+        "status": "timeout",
+        "error_kind": "hard_timeout",
+        "error_message": "timed out",
+        "diagnostics_path": "/tmp/diag.json",
+    }
+    report.record_step(
+        step_name="worker",
+        model="opus",
+        phase="loop",
+        status="timeout",
+        duration_s=5.0,
+        iteration=1,
+        diagnostics_path="/tmp/diag.json",
+    )
+
+    path = tmp_path / "report.json"
+    report.save(path)
+    loaded = RunReport.load(path)
+
+    assert loaded.outcome == "ERROR"
+    assert loaded.iterations_completed == 2
+    assert loaded.items_completed == 1
+    assert loaded.items_total == 3
+    assert loaded.failure_summary == report.failure_summary
+    assert loaded.steps[0].status == "timeout"
+    assert loaded.steps[0].diagnostics_path == "/tmp/diag.json"
+
+
 def test_parse_shortstat_full():
     assert _parse_shortstat(" 3 files changed, 10 insertions(+), 5 deletions(-)") == (
         10,
@@ -218,3 +287,4 @@ def test_print_report_no_crash(capsys):
     out = capsys.readouterr().out
     assert "RUN REPORT" in out
     assert "COMPLETE" in out
+    assert "Steps" in out

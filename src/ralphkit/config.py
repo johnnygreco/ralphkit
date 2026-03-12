@@ -7,6 +7,10 @@ STATE_DIR = ".ralphkit"
 
 DEFAULT_MAX_ITERATIONS = 10
 DEFAULT_MODEL = "opus"
+DEFAULT_TIMEOUT_SECONDS = 1800
+DEFAULT_CLEANUP_ON_ERROR = "light"
+DEFAULT_CHECKPOINT_POLICY = "auto"
+DEFAULT_ISOLATION = "shared"
 
 
 def _default_cleanup() -> list["StepConfig"]:
@@ -46,6 +50,8 @@ class StepConfig:
     system_prompt: str
     model: str | None = None  # falls back to default_model
     handoff_prompt: str | None = None  # per-step override (pipe only)
+    timeout_seconds: int | None = None
+    idle_timeout_seconds: int | None = None
 
 
 @dataclass
@@ -54,6 +60,11 @@ class RalphConfig:
     default_model: str
     state_dir: str
     loop: list[StepConfig]
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
+    idle_timeout_seconds: int | None = None
+    cleanup_on_error: str = DEFAULT_CLEANUP_ON_ERROR
+    checkpoint_policy: str = DEFAULT_CHECKPOINT_POLICY
+    isolation: str = DEFAULT_ISOLATION
     setup: list[StepConfig] = field(default_factory=list)
     cleanup: list[StepConfig] = field(default_factory=list)
     pipe: list[StepConfig] = field(default_factory=list)
@@ -78,9 +89,37 @@ def _parse_steps(raw: list[dict], section: str) -> list[StepConfig]:
                 system_prompt=entry["system_prompt"],
                 model=entry.get("model"),
                 handoff_prompt=entry.get("handoff_prompt"),
+                timeout_seconds=_parse_positive_int(
+                    entry.get("timeout_seconds"), f"{section}[{i}].timeout_seconds"
+                ),
+                idle_timeout_seconds=_parse_positive_int(
+                    entry.get("idle_timeout_seconds"),
+                    f"{section}[{i}].idle_timeout_seconds",
+                ),
             )
         )
     return steps
+
+
+def _parse_positive_int(value, field_name: str) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"{field_name} must be an integer: {e}") from e
+    if parsed < 1:
+        raise ValueError(f"{field_name} must be >= 1, got {parsed}")
+    return parsed
+
+
+def _parse_choice(value, field_name: str, choices: set[str], default: str) -> str:
+    raw = value if value is not None else default
+    parsed = str(raw)
+    if parsed not in choices:
+        allowed = ", ".join(sorted(choices))
+        raise ValueError(f"{field_name} must be one of: {allowed}")
+    return parsed
 
 
 def load_config(path: str | Path | None = None) -> RalphConfig:
@@ -91,6 +130,10 @@ def load_config(path: str | Path | None = None) -> RalphConfig:
             default_model=DEFAULT_MODEL,
             state_dir=STATE_DIR,
             loop=_default_loop(),
+            timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+            cleanup_on_error=DEFAULT_CLEANUP_ON_ERROR,
+            checkpoint_policy=DEFAULT_CHECKPOINT_POLICY,
+            isolation=DEFAULT_ISOLATION,
             cleanup=_default_cleanup(),
         )
 
@@ -102,6 +145,11 @@ def load_config(path: str | Path | None = None) -> RalphConfig:
         "max_iterations",
         "default_model",
         "state_dir",
+        "timeout_seconds",
+        "idle_timeout_seconds",
+        "cleanup_on_error",
+        "checkpoint_policy",
+        "isolation",
         "loop",
         "setup",
         "cleanup",
@@ -126,6 +174,30 @@ def load_config(path: str | Path | None = None) -> RalphConfig:
 
     default_model = data.get("default_model", DEFAULT_MODEL)
     state_dir = data.get("state_dir", STATE_DIR)
+    timeout_seconds = _parse_positive_int(
+        data.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS), "timeout_seconds"
+    )
+    idle_timeout_seconds = _parse_positive_int(
+        data.get("idle_timeout_seconds"), "idle_timeout_seconds"
+    )
+    cleanup_on_error = _parse_choice(
+        data.get("cleanup_on_error"),
+        "cleanup_on_error",
+        {"full", "light", "skip"},
+        DEFAULT_CLEANUP_ON_ERROR,
+    )
+    checkpoint_policy = _parse_choice(
+        data.get("checkpoint_policy"),
+        "checkpoint_policy",
+        {"auto", "off"},
+        DEFAULT_CHECKPOINT_POLICY,
+    )
+    isolation = _parse_choice(
+        data.get("isolation"),
+        "isolation",
+        {"shared", "worktree"},
+        DEFAULT_ISOLATION,
+    )
     plan_model = data.get("plan_model")
 
     # ── Pipe vs loop mutual exclusivity ──────────────────────────
@@ -166,6 +238,11 @@ def load_config(path: str | Path | None = None) -> RalphConfig:
         default_model=default_model,
         state_dir=state_dir,
         loop=loop_steps,
+        timeout_seconds=timeout_seconds or DEFAULT_TIMEOUT_SECONDS,
+        idle_timeout_seconds=idle_timeout_seconds,
+        cleanup_on_error=cleanup_on_error,
+        checkpoint_policy=checkpoint_policy,
+        isolation=isolation,
         setup=setup_steps,
         cleanup=cleanup_steps,
         pipe=pipe_steps,

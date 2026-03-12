@@ -1,11 +1,16 @@
+import json
 import shlex
 import shutil
 import subprocess
+from datetime import datetime
 
 from ralphkit.tmux import (
+    build_submission_metadata,
     build_job_script,
+    job_path_local,
     parse_session_list,
     log_path_local,
+    meta_path_local,
     script_path_local,
     TMUX_LIST_FORMAT,
 )
@@ -24,16 +29,37 @@ def submit_local(
     ralph_args: list[str],
     subcommand: str,
     working_dir: str | None = None,
+    isolation: str | None = None,
 ) -> None:
     """Launch a ralphkit job in a local detached tmux session."""
     _check_tmux()
 
     ralph_cmd = f"ralphkit {subcommand} " + shlex.join(ralph_args)
-    script = build_job_script(job_id, ralph_cmd, working_dir)
+    script = build_job_script(job_id, ralph_cmd, working_dir, isolation=isolation)
     script_file = script_path_local(job_id)
+    meta_file = meta_path_local(job_id)
+    job_dir = job_path_local(job_id)
     script_file.parent.mkdir(parents=True, exist_ok=True)
+    job_dir.mkdir(parents=True, exist_ok=True)
     script_file.write_text(script)
     script_file.chmod(0o700)
+    meta_file.write_text(
+        json.dumps(
+            build_submission_metadata(
+                job_id=job_id,
+                subcommand=subcommand,
+                ralph_args=ralph_args,
+                working_dir=working_dir,
+                isolation=isolation,
+                scratch_dir=str(job_dir),
+            )
+            | {
+                "submitted_at": datetime.now().isoformat(),
+            },
+            indent=2,
+        )
+        + "\n"
+    )
 
     subprocess.run(
         [

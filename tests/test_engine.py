@@ -16,6 +16,7 @@ from ralphkit.engine import (
     run_foreground,
 )
 from ralphkit.config import STATE_DIR, StepConfig
+from ralphkit.runner import ClaudeRunError
 
 
 # -- Helper --
@@ -131,28 +132,63 @@ def test_step_names_multiple():
 
 @patch("ralphkit.engine.run_claude")
 def test_run_phase_success(mock_run):
-    _run_phase("prompt", "model", "system")
-    mock_run.assert_called_once_with("prompt", "model", "system")
+    _run_phase(
+        "prompt",
+        "model",
+        "system",
+        timeout_seconds=12,
+        idle_timeout_seconds=3,
+        cwd="/tmp/work",
+    )
+    mock_run.assert_called_once_with(
+        "prompt",
+        "model",
+        "system",
+        timeout_seconds=12,
+        idle_timeout_seconds=3,
+        cwd="/tmp/work",
+    )
 
 
 @patch("ralphkit.engine.run_claude", side_effect=RuntimeError("boom"))
 def test_run_phase_runtime_error_exits(mock_run):
     with pytest.raises(SystemExit) as exc_info:
-        _run_phase("p", "m", "s")
+        _run_phase(
+            "p",
+            "m",
+            "s",
+            timeout_seconds=10,
+            idle_timeout_seconds=None,
+            cwd="/tmp/work",
+        )
     assert exc_info.value.code == 1
 
 
 @patch("ralphkit.engine.run_claude", side_effect=RuntimeError("boom"))
 def test_run_phase_runtime_error_prints_to_stderr(mock_run, capsys):
     with pytest.raises(SystemExit):
-        _run_phase("p", "m", "s")
+        _run_phase(
+            "p",
+            "m",
+            "s",
+            timeout_seconds=10,
+            idle_timeout_seconds=None,
+            cwd="/tmp/work",
+        )
     assert "boom" in capsys.readouterr().err
 
 
 @patch("ralphkit.engine.run_claude", side_effect=TypeError("unexpected"))
 def test_run_phase_non_runtime_error_propagates(mock_run):
     with pytest.raises(TypeError, match="unexpected"):
-        _run_phase("p", "m", "s")
+        _run_phase(
+            "p",
+            "m",
+            "s",
+            timeout_seconds=10,
+            idle_timeout_seconds=None,
+            cwd="/tmp/work",
+        )
 
 
 # -- _validate_plan --
@@ -220,7 +256,7 @@ def test_foreground_complete_on_first_iteration(mock_run, monkeypatch, tmp_path)
     state_dir = tmp_path / STATE_DIR / "current"
     call_count = {"n": 0}
 
-    def fake_claude(prompt, model, system_prompt):
+    def fake_claude(prompt, model, system_prompt, **kwargs):
         call_count["n"] += 1
         if call_count["n"] == 1:
             # Planner: create plan with 1 item
@@ -252,7 +288,7 @@ def test_foreground_two_iterations_then_complete(mock_run, monkeypatch, tmp_path
     state_dir = tmp_path / STATE_DIR / "current"
     call_count = {"n": 0}
 
-    def fake_claude(prompt, model, system_prompt):
+    def fake_claude(prompt, model, system_prompt, **kwargs):
         call_count["n"] += 1
         if call_count["n"] == 1:
             # Planner
@@ -292,7 +328,7 @@ loop:
     state_dir = tmp_path / STATE_DIR / "current"
     call_count = {"n": 0}
 
-    def fake_claude(prompt, model, system_prompt):
+    def fake_claude(prompt, model, system_prompt, **kwargs):
         call_count["n"] += 1
         if call_count["n"] == 1:
             # Planner: 3 items (more than max_iterations can complete)
@@ -321,7 +357,7 @@ def test_foreground_worker_corrupts_plan_exits(mock_run, monkeypatch, tmp_path):
     state_dir = tmp_path / STATE_DIR / "current"
     call_count = {"n": 0}
 
-    def fake_claude(prompt, model, system_prompt):
+    def fake_claude(prompt, model, system_prompt, **kwargs):
         call_count["n"] += 1
         if call_count["n"] == 1:
             _write_plan(state_dir, _make_items(1))
@@ -346,7 +382,7 @@ def test_foreground_blocked_exits(mock_run, monkeypatch, tmp_path):
     state_dir = tmp_path / STATE_DIR / "current"
     call_count = {"n": 0}
 
-    def fake_claude(prompt, model, system_prompt):
+    def fake_claude(prompt, model, system_prompt, **kwargs):
         call_count["n"] += 1
         if call_count["n"] == 1:
             _write_plan(state_dir, _make_items(1))
@@ -387,7 +423,7 @@ cleanup:
     state_dir = tmp_path / STATE_DIR / "current"
     calls = []
 
-    def fake_claude(prompt, model, system_prompt):
+    def fake_claude(prompt, model, system_prompt, **kwargs):
         calls.append(prompt)
         if "Init." in prompt:
             pass  # setup step
@@ -433,7 +469,7 @@ cleanup:
     state_dir = tmp_path / STATE_DIR / "current"
     calls = []
 
-    def fake_claude(prompt, model, system_prompt):
+    def fake_claude(prompt, model, system_prompt, **kwargs):
         calls.append(prompt)
         if len(calls) == 1:
             # Planner: 2 items, but only 1 iteration allowed
@@ -453,6 +489,60 @@ cleanup:
 
 
 @patch("ralphkit.engine.run_claude")
+def test_foreground_timeout_skips_cleanup_with_light_policy(
+    mock_run, monkeypatch, tmp_path
+):
+    cfg = tmp_path / "ralph.yaml"
+    cfg.write_text(
+        """\
+max_iterations: 1
+default_model: opus
+cleanup_on_error: light
+loop:
+  - step_name: worker
+    task_prompt: "Work."
+    system_prompt: "System."
+cleanup:
+  - step_name: finalize
+    task_prompt: "Cleanup."
+    system_prompt: "Cleanup system."
+"""
+    )
+    monkeypatch.chdir(tmp_path)
+
+    state_dir = tmp_path / STATE_DIR / "current"
+    calls = []
+
+    def fake_claude(prompt, model, system_prompt, **kwargs):
+        calls.append(prompt)
+        if len(calls) == 1:
+            _write_plan(state_dir, _make_items(1))
+            return None
+        raise ClaudeRunError(
+            "claude process timed out after 30s.",
+            kind="hard_timeout",
+            elapsed_s=30.0,
+            timeout_seconds=30,
+        )
+
+    mock_run.side_effect = fake_claude
+
+    with pytest.raises(SystemExit) as exc_info:
+        run_foreground(task="do stuff", config_path=str(cfg), force=True)
+    assert exc_info.value.code == 1
+    assert len(calls) == 2
+    assert calls[1] == "Work."
+
+    report = json.loads(
+        (tmp_path / STATE_DIR / "runs" / "001" / "report.json").read_text()
+    )
+    assert report["outcome"] == "ERROR"
+    assert report["failure_summary"]["error_kind"] == "hard_timeout"
+    assert report["failure_summary"]["phase"] == "loop"
+    assert report["steps"][-1]["status"] == "timeout"
+
+
+@patch("ralphkit.engine.run_claude")
 def test_foreground_with_plan_path(mock_run, monkeypatch, tmp_path):
     """Providing --plan skips the planner and uses the given plan file."""
     cfg = tmp_path / "ralph.yaml"
@@ -464,7 +554,7 @@ def test_foreground_with_plan_path(mock_run, monkeypatch, tmp_path):
 
     state_dir = tmp_path / STATE_DIR / "current"
 
-    def fake_claude(prompt, model, system_prompt):
+    def fake_claude(prompt, model, system_prompt, **kwargs):
         # Worker: complete the item
         _write_plan(state_dir, _make_items(1, done={1}))
 
@@ -491,7 +581,7 @@ def test_foreground_plan_only_exits_after_planning(mock_run, monkeypatch, tmp_pa
 
     state_dir = tmp_path / STATE_DIR / "current"
 
-    def fake_claude(prompt, model, system_prompt):
+    def fake_claude(prompt, model, system_prompt, **kwargs):
         _write_plan(state_dir, _make_items(3))
 
     mock_run.side_effect = fake_claude
@@ -517,7 +607,7 @@ def test_foreground_shows_run_number(mock_run, monkeypatch, tmp_path, capsys):
     state_dir = tmp_path / STATE_DIR / "current"
     call_count = {"n": 0}
 
-    def fake_claude(prompt, model, system_prompt):
+    def fake_claude(prompt, model, system_prompt, **kwargs):
         call_count["n"] += 1
         if call_count["n"] == 1:
             _write_plan(state_dir, _make_items(1))
@@ -546,7 +636,7 @@ def test_foreground_shows_step_numbering(
     mock_time.time.return_value = 100.0
     call_count = {"n": 0}
 
-    def fake_claude(prompt, model, system_prompt):
+    def fake_claude(prompt, model, system_prompt, **kwargs):
         call_count["n"] += 1
         if call_count["n"] == 1:
             _write_plan(state_dir, _make_items(1))
@@ -579,7 +669,7 @@ def test_foreground_shows_timing(mock_run, mock_time, monkeypatch, tmp_path, cap
 
     plan_written = {"done": False}
 
-    def fake_claude(prompt, model, system_prompt):
+    def fake_claude(prompt, model, system_prompt, **kwargs):
         if not plan_written["done"]:
             plan_written["done"] = True
             _write_plan(state_dir, _make_items(1))
@@ -611,7 +701,7 @@ def test_foreground_multiple_iterations_single_run_directory(
     state_dir = tmp_path / STATE_DIR / "current"
     call_count = {"n": 0}
 
-    def fake_claude(prompt, model, system_prompt):
+    def fake_claude(prompt, model, system_prompt, **kwargs):
         call_count["n"] += 1
         if call_count["n"] == 1:
             _write_plan(state_dir, _make_items(2))
@@ -641,7 +731,7 @@ def test_foreground_two_invocations_create_two_runs(mock_run, monkeypatch, tmp_p
     state_dir = tmp_path / STATE_DIR / "current"
     call_count = {"n": 0}
 
-    def fake_claude(prompt, model, system_prompt):
+    def fake_claude(prompt, model, system_prompt, **kwargs):
         call_count["n"] += 1
         if call_count["n"] in (1, 3):
             # Planner calls
@@ -685,7 +775,7 @@ loop:
     captured_prompts = []
     call_count = {"n": 0}
 
-    def fake_claude(prompt, model, system_prompt):
+    def fake_claude(prompt, model, system_prompt, **kwargs):
         call_count["n"] += 1
         captured_prompts.append(prompt)
         if call_count["n"] == 1:
@@ -730,7 +820,7 @@ def test_foreground_pipe_runs_all_steps(mock_run, monkeypatch, tmp_path):
 
     calls = []
 
-    def fake_claude(prompt, model, system_prompt):
+    def fake_claude(prompt, model, system_prompt, **kwargs):
         calls.append(prompt)
 
     mock_run.side_effect = fake_claude
@@ -754,7 +844,7 @@ def test_foreground_pipe_no_task_succeeds(mock_run, monkeypatch, tmp_path):
     cfg.write_text(_pipe_config_yaml())
     monkeypatch.chdir(tmp_path)
 
-    mock_run.side_effect = lambda *a: None
+    mock_run.side_effect = lambda *a, **kwargs: None
 
     with pytest.raises(SystemExit) as exc_info:
         run_foreground(task=None, config_path=str(cfg), force=True)
@@ -779,7 +869,7 @@ pipe:
 
     captured_prompts = []
 
-    def fake_claude(prompt, model, system_prompt):
+    def fake_claude(prompt, model, system_prompt, **kwargs):
         captured_prompts.append(prompt)
 
     mock_run.side_effect = fake_claude
@@ -800,7 +890,7 @@ def test_foreground_pipe_blocked_aborts(mock_run, monkeypatch, tmp_path):
 
     state_dir = tmp_path / STATE_DIR / "current"
 
-    def fake_claude(prompt, model, system_prompt):
+    def fake_claude(prompt, model, system_prompt, **kwargs):
         (state_dir / "RALPH-BLOCKED.md").write_text("stuck")
 
     mock_run.side_effect = fake_claude
@@ -817,7 +907,7 @@ def test_foreground_pipe_shows_banner(mock_run, monkeypatch, tmp_path, capsys):
     cfg.write_text(_pipe_config_yaml())
     monkeypatch.chdir(tmp_path)
 
-    mock_run.side_effect = lambda *a: None
+    mock_run.side_effect = lambda *a, **kwargs: None
 
     with pytest.raises(SystemExit) as exc_info:
         run_foreground(task=None, config_path=str(cfg), force=True)
@@ -850,7 +940,7 @@ pipe:
 
     captured_systems = []
 
-    def fake_claude(prompt, model, system_prompt):
+    def fake_claude(prompt, model, system_prompt, **kwargs):
         captured_systems.append(system_prompt)
 
     mock_run.side_effect = fake_claude
@@ -890,7 +980,7 @@ pipe:
 
     captured_systems = []
 
-    def fake_claude(prompt, model, system_prompt):
+    def fake_claude(prompt, model, system_prompt, **kwargs):
         captured_systems.append(system_prompt)
 
     mock_run.side_effect = fake_claude
@@ -921,7 +1011,7 @@ pipe:
 
     captured_systems = []
 
-    def fake_claude(prompt, model, system_prompt):
+    def fake_claude(prompt, model, system_prompt, **kwargs):
         captured_systems.append(system_prompt)
 
     mock_run.side_effect = fake_claude
@@ -930,7 +1020,8 @@ pipe:
         run_foreground(task=None, config_path=str(cfg), force=True)
     assert exc_info.value.code == 0
 
-    assert captured_systems[0] == "You are step1."
+    assert captured_systems[0].startswith("You are step1.")
+    assert "handoff__" not in captured_systems[0]
 
 
 # -- _build_default_handoff --

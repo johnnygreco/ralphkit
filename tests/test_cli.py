@@ -95,8 +95,16 @@ def test_build_passes_options(mock_fg):
             "sonnet",
             "--state-dir",
             "/tmp/test",
+            "--timeout-seconds",
+            "1200",
+            "--idle-timeout-seconds",
+            "90",
+            "--cleanup-on-error",
+            "skip",
             "--plan-model",
             "haiku",
+            "--resume-run",
+            "12",
             "-f",
         ],
     )
@@ -106,7 +114,11 @@ def test_build_passes_options(mock_fg):
     assert kwargs["max_iterations"] == 5
     assert kwargs["default_model"] == "sonnet"
     assert kwargs["state_dir"] == "/tmp/test"
+    assert kwargs["timeout_seconds"] == 1200
+    assert kwargs["idle_timeout_seconds"] == 90
+    assert kwargs["cleanup_on_error"] == "skip"
     assert kwargs["plan_model"] == "haiku"
+    assert kwargs["resume_run"] == "12"
     assert kwargs["force"] is True
 
 
@@ -239,6 +251,16 @@ def test_build_host_local_forwards_options(mock_run, mock_which, tmp_path):
                 "local",
                 "--max-iterations",
                 "3",
+                "--timeout-seconds",
+                "900",
+                "--idle-timeout-seconds",
+                "45",
+                "--cleanup-on-error",
+                "skip",
+                "--resume-run",
+                "7",
+                "--isolation",
+                "worktree",
                 "--plan-model",
                 "haiku",
                 "--plan-only",
@@ -247,9 +269,15 @@ def test_build_host_local_forwards_options(mock_run, mock_which, tmp_path):
     assert result.exit_code == 0
     script = (tmp_path / "job.sh").read_text()
     assert "--max-iterations 3" in script
+    assert "--timeout-seconds 900" in script
+    assert "--idle-timeout-seconds 45" in script
+    assert "--cleanup-on-error skip" in script
     assert "--plan-model haiku" in script
     assert "--plan-only" in script
+    assert "--resume-run 7" in script
     assert "--force" in script
+    assert 'WORKTREE_DIR="$JOB_DIR/worktree"' in script
+    assert 'export RALPHKIT_WORKING_DIR="$WORKTREE_DIR"' in script
 
 
 @patch("ralphkit.remote.subprocess.run")
@@ -416,11 +444,21 @@ def test_remote_dispatch_includes_force(mock_run):
     )
     result = runner.invoke(app, ["research", "topic", "--host", "dev.example.com"])
     assert result.exit_code == 0
-    # The script uploaded to remote should contain --force
     calls = mock_run.call_args_list
-    # Find the script upload call (contains the script content as input)
-    script_calls = [c for c in calls if c[1].get("input")]
-    assert any("--force" in c[1]["input"] for c in script_calls)
+    metadata_calls = [
+        c
+        for c in calls
+        if c[1].get("input") and '"subcommand": "research"' in c[1]["input"]
+    ]
+    script_calls = [
+        c
+        for c in calls
+        if c[1].get("input") and "ralphkit research" in c[1]["input"]
+    ]
+    assert len(metadata_calls) == 1
+    assert "--force" in metadata_calls[0][1]["input"]
+    assert len(script_calls) == 1
+    assert "--force" in script_calls[0][1]["input"]
 
 
 # -- remote dispatch with config --

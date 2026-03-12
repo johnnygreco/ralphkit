@@ -18,6 +18,7 @@ class StepRecord:
     step_name: str
     model: str
     phase: str  # "pipe", "setup", "loop", "cleanup"
+    status: str = "success"
     iteration: int | None = None
     duration_s: float = 0.0
     num_turns: int | None = None
@@ -25,6 +26,12 @@ class StepRecord:
     is_error: bool | None = None
     duration_api_ms: int | None = None
     model_usage: dict | None = None  # raw modelUsage from Claude JSON
+    error_kind: str | None = None
+    error_message: str | None = None
+    timeout_seconds: int | None = None
+    idle_timeout_seconds: int | None = None
+    diagnostics_path: str | None = None
+    claude_transcript_path: str | None = None
     lines_added: int = 0
     lines_deleted: int = 0
 
@@ -37,6 +44,7 @@ class RunReport:
     total_duration_s: float = 0.0
     items_completed: int = 0
     items_total: int = 0
+    failure_summary: dict | None = None
 
     def record_step(
         self,
@@ -45,8 +53,15 @@ class RunReport:
         model: str,
         phase: str,
         duration_s: float,
+        status: str = "success",
         iteration: int | None = None,
         claude_output: dict | None = None,
+        error_kind: str | None = None,
+        error_message: str | None = None,
+        timeout_seconds: int | None = None,
+        idle_timeout_seconds: int | None = None,
+        diagnostics_path: str | None = None,
+        claude_transcript_path: str | None = None,
         lines_added: int = 0,
         lines_deleted: int = 0,
     ) -> None:
@@ -68,6 +83,7 @@ class RunReport:
                 step_name=step_name,
                 model=model,
                 phase=phase,
+                status=status,
                 iteration=iteration,
                 duration_s=duration_s,
                 num_turns=num_turns,
@@ -75,6 +91,12 @@ class RunReport:
                 is_error=is_error,
                 duration_api_ms=duration_api_ms,
                 model_usage=model_usage,
+                error_kind=error_kind,
+                error_message=error_message,
+                timeout_seconds=timeout_seconds,
+                idle_timeout_seconds=idle_timeout_seconds,
+                diagnostics_path=diagnostics_path,
+                claude_transcript_path=claude_transcript_path,
                 lines_added=lines_added,
                 lines_deleted=lines_deleted,
             )
@@ -108,6 +130,7 @@ class RunReport:
                     "step_name": s.step_name,
                     "model": s.model,
                     "phase": s.phase,
+                    "status": s.status,
                     "iteration": s.iteration,
                     "duration_s": s.duration_s,
                     "num_turns": s.num_turns,
@@ -115,6 +138,12 @@ class RunReport:
                     "is_error": s.is_error,
                     "duration_api_ms": s.duration_api_ms,
                     "model_usage": s.model_usage,
+                    "error_kind": s.error_kind,
+                    "error_message": s.error_message,
+                    "timeout_seconds": s.timeout_seconds,
+                    "idle_timeout_seconds": s.idle_timeout_seconds,
+                    "diagnostics_path": s.diagnostics_path,
+                    "claude_transcript_path": s.claude_transcript_path,
                     "lines_added": s.lines_added,
                     "lines_deleted": s.lines_deleted,
                 }
@@ -130,10 +159,48 @@ class RunReport:
         if self.items_total > 0:
             result["items_completed"] = self.items_completed
             result["items_total"] = self.items_total
+        if self.failure_summary is not None:
+            result["failure_summary"] = self.failure_summary
         return result
 
     def save(self, path: Path) -> None:
         path.write_text(json.dumps(self.to_dict(), indent=2) + "\n")
+
+    @classmethod
+    def load(cls, path: Path) -> "RunReport":
+        data = json.loads(path.read_text())
+        report = cls()
+        report.outcome = data.get("outcome")
+        report.iterations_completed = data.get("iterations_completed", 0)
+        report.total_duration_s = data.get("total_duration_s", 0.0)
+        report.items_completed = data.get("items_completed", 0)
+        report.items_total = data.get("items_total", 0)
+        report.failure_summary = data.get("failure_summary")
+        for step in data.get("steps", []):
+            report.steps.append(
+                StepRecord(
+                    step_name=step["step_name"],
+                    model=step["model"],
+                    phase=step["phase"],
+                    status=step.get("status", "success"),
+                    iteration=step.get("iteration"),
+                    duration_s=step.get("duration_s", 0.0),
+                    num_turns=step.get("num_turns"),
+                    session_id=step.get("session_id"),
+                    is_error=step.get("is_error"),
+                    duration_api_ms=step.get("duration_api_ms"),
+                    model_usage=step.get("model_usage"),
+                    error_kind=step.get("error_kind"),
+                    error_message=step.get("error_message"),
+                    timeout_seconds=step.get("timeout_seconds"),
+                    idle_timeout_seconds=step.get("idle_timeout_seconds"),
+                    diagnostics_path=step.get("diagnostics_path"),
+                    claude_transcript_path=step.get("claude_transcript_path"),
+                    lines_added=step.get("lines_added", 0),
+                    lines_deleted=step.get("lines_deleted", 0),
+                )
+            )
+        return report
 
 
 # ── Git helpers ────────────────────────────────────────────────────
@@ -186,7 +253,7 @@ def print_report(report: RunReport) -> None:
         outcome_str += f" ({report.iterations_completed} iteration(s))"
     if report.outcome in ("COMPLETE", "PIPE_COMPLETE"):
         outcome_display = f"[bold green]{outcome_str}[/]"
-    elif report.outcome in ("MAX_ITERATIONS", "ERROR"):
+    elif report.outcome in ("MAX_ITERATIONS", "ERROR", "BLOCKED"):
         outcome_display = f"[bold red]{outcome_str}[/]"
     else:
         outcome_display = outcome_str
@@ -241,6 +308,7 @@ def print_report(report: RunReport) -> None:
         )
         table.add_column("Phase")
         table.add_column("Step")
+        table.add_column("Status")
         table.add_column("Model")
         table.add_column("Duration", justify="right")
         table.add_column("Turns", justify="right")
@@ -251,9 +319,16 @@ def print_report(report: RunReport) -> None:
                 phase = f"loop:{s.iteration}"
             turns_str = str(s.num_turns) if s.num_turns is not None else "-"
             diff_str = f"[green]+{s.lines_added}[/]/[red]-{s.lines_deleted}[/]"
+            if s.status == "success":
+                status_str = "[green]ok[/]"
+            elif s.status == "timeout":
+                status_str = "[red]timeout[/]"
+            else:
+                status_str = f"[red]{s.status}[/]"
             table.add_row(
                 phase,
                 s.step_name,
+                status_str,
                 _short_model(s.model),
                 fmt_duration(s.duration_s),
                 turns_str,
@@ -266,7 +341,9 @@ def print_report(report: RunReport) -> None:
     total_added = sum(s.lines_added for s in report.steps)
     total_deleted = sum(s.lines_deleted for s in report.steps)
     total_turns = report.total_turns()
-    error_count = sum(1 for s in report.steps if s.is_error is True)
+    error_count = sum(
+        1 for s in report.steps if s.is_error is True or s.status != "success"
+    )
 
     console.print(Rule("Totals", style="yellow"))
     console.print(
@@ -274,4 +351,25 @@ def print_report(report: RunReport) -> None:
     )
     console.print(f"  Total turns:    {total_turns}")
     console.print(f"  Errors:         {error_count}")
+    if report.failure_summary:
+        console.print()
+        console.print(Rule("Failure", style="red"))
+        console.print(
+            f"  Step:           {report.failure_summary.get('step_name') or '-'}"
+        )
+        console.print(
+            f"  Phase:          {report.failure_summary.get('phase') or '-'}"
+        )
+        console.print(
+            f"  Kind:           {report.failure_summary.get('error_kind') or '-'}"
+        )
+        console.print(
+            f"  Message:        {report.failure_summary.get('error_message') or '-'}"
+        )
+        diagnostics_path = report.failure_summary.get("diagnostics_path")
+        if diagnostics_path:
+            console.print(f"  Diagnostics:    {diagnostics_path}")
+        transcript_path = report.failure_summary.get("claude_transcript_path")
+        if transcript_path:
+            console.print(f"  Transcript:     {transcript_path}")
     console.print()

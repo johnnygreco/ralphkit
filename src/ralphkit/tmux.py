@@ -7,6 +7,8 @@ from ralphkit.jobs import JOB_ID_PREFIX
 # For Python-level file access, use Path.home().
 LOGS_DIR_SHELL = "$HOME/.local/share/ralphkit/logs"
 LOGS_DIR_LOCAL = Path.home() / ".local" / "share" / "ralphkit" / "logs"
+JOBS_DIR_SHELL = "$HOME/.local/share/ralphkit/jobs"
+JOBS_DIR_LOCAL = Path.home() / ".local" / "share" / "ralphkit" / "jobs"
 
 
 def log_path_local(job_id: str) -> Path:
@@ -19,10 +21,68 @@ def script_path_local(job_id: str) -> Path:
     return LOGS_DIR_LOCAL / f"{job_id}.sh"
 
 
+def meta_path_local(job_id: str) -> Path:
+    """Local Python path to a job's metadata file."""
+    return LOGS_DIR_LOCAL / f"{job_id}.meta.json"
+
+
+def job_path_local(job_id: str) -> Path:
+    """Local Python path to a job scratch directory."""
+    return JOBS_DIR_LOCAL / job_id
+
+
+def _arg_value(args: list[str], flag: str) -> str | None:
+    try:
+        idx = args.index(flag)
+    except ValueError:
+        return None
+    next_idx = idx + 1
+    if next_idx >= len(args):
+        return None
+    return args[next_idx]
+
+
+def _arg_int_value(args: list[str], flag: str) -> int | None:
+    value = _arg_value(args, flag)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def build_submission_metadata(
+    *,
+    job_id: str,
+    subcommand: str,
+    ralph_args: list[str],
+    working_dir: str | None,
+    isolation: str | None,
+    scratch_dir: str,
+) -> dict:
+    return {
+        "job_id": job_id,
+        "subcommand": subcommand,
+        "args": ralph_args,
+        "working_dir": working_dir,
+        "isolation": isolation or "shared",
+        "scratch_dir": scratch_dir,
+        "state_dir": _arg_value(ralph_args, "--state-dir"),
+        "config_path": _arg_value(ralph_args, "--config"),
+        "plan_path": _arg_value(ralph_args, "--plan"),
+        "timeout_seconds": _arg_int_value(ralph_args, "--timeout-seconds"),
+        "idle_timeout_seconds": _arg_int_value(ralph_args, "--idle-timeout-seconds"),
+        "cleanup_on_error": _arg_value(ralph_args, "--cleanup-on-error"),
+        "resume_run": _arg_value(ralph_args, "--resume-run"),
+    }
+
+
 def build_job_script(
     job_id: str,
     ralph_cmd: str,
     working_dir: str | None = None,
+    isolation: str | None = None,
 ) -> str:
     """Generate a bash script for a ralphkit job."""
     lines = [
@@ -36,10 +96,30 @@ def build_job_script(
         "",
         f'LOG_DIR="{LOGS_DIR_SHELL}"',
         f'LOG_FILE="$LOG_DIR/{job_id}.log"',
-        'mkdir -p "$LOG_DIR"',
+        f'JOB_DIR="{JOBS_DIR_SHELL}/{job_id}"',
+        'TMP_DIR="$JOB_DIR/tmp"',
+        'mkdir -p "$LOG_DIR" "$JOB_DIR" "$TMP_DIR"',
+        f'export RALPHKIT_JOB_ID="{job_id}"',
+        'export RALPHKIT_SCRATCH_DIR="$JOB_DIR"',
+        'export TMPDIR="$TMP_DIR"',
     ]
     if working_dir:
-        lines.append(f"cd {shlex.quote(working_dir)} || exit 1")
+        lines.append(f'ORIG_DIR={shlex.quote(working_dir)}')
+    else:
+        lines.append('ORIG_DIR="$PWD"')
+    if isolation == "worktree":
+        lines += [
+            'WORKTREE_DIR="$JOB_DIR/worktree"',
+            'git -C "$ORIG_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "[ralphkit] isolation=worktree requires a git repo" >> "$LOG_FILE"; exit 1; }',
+            'git -C "$ORIG_DIR" worktree add --force --detach "$WORKTREE_DIR" HEAD >/dev/null 2>&1 || { echo "[ralphkit] failed to create worktree" >> "$LOG_FILE"; exit 1; }',
+            'export RALPHKIT_WORKING_DIR="$WORKTREE_DIR"',
+            'cd "$WORKTREE_DIR" || exit 1',
+        ]
+    else:
+        lines += [
+            'export RALPHKIT_WORKING_DIR="$ORIG_DIR"',
+            'cd "$ORIG_DIR" || exit 1',
+        ]
     lines += [
         "",
         f'{ralph_cmd} 2>&1 | tee "$LOG_FILE"',

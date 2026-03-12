@@ -15,7 +15,7 @@ from ralphkit.prompts import (
     DEFAULT_PLANNER_TASK_PROMPT,
 )
 from ralphkit.report import RunReport, git_diff_stat, print_report
-from ralphkit.runner import run_claude
+from ralphkit.runner import ClaudeRunError, run_claude
 from ralphkit.state import StateDir
 from ralphkit.ui import (
     console,
@@ -34,11 +34,29 @@ from ralphkit.ui import (
 )
 
 
-def _run_phase(prompt: str, model: str, system_prompt: str) -> dict | None:
+def _run_phase(
+    prompt: str,
+    model: str,
+    system_prompt: str,
+    *,
+    timeout_seconds: int,
+    idle_timeout_seconds: int | None,
+    cwd: str,
+    on_error=None,
+) -> dict | None:
     """Run a claude phase, exiting on failure."""
     try:
-        return run_claude(prompt, model, system_prompt)
+        return run_claude(
+            prompt,
+            model,
+            system_prompt,
+            timeout_seconds=timeout_seconds,
+            idle_timeout_seconds=idle_timeout_seconds,
+            cwd=cwd,
+        )
     except RuntimeError as e:
+        if on_error is not None:
+            on_error(e)
         print_error(f"Error: {e}")
         sys.exit(1)
 
@@ -136,16 +154,33 @@ def _validate_plan(plan: dict | None) -> str | None:
     return None
 
 
+def _checkpoint_suffix(state_dir: str, step_name: str) -> str:
+    return (
+        "CHECKPOINTING REQUIREMENTS:\n"
+        f"- Maintain {state_dir}/progress.md incrementally during the '{step_name}' step.\n"
+        "- Before any long-running command such as builds, broad test suites, benchmarks, "
+        "or other operations likely to take more than a minute, append a short note with "
+        "the timestamp, the command you are about to run, and why.\n"
+        "- Immediately after each major command finishes or fails, append the outcome, "
+        "headline result, and next intended action.\n"
+        "- Do not wait until the end of the step to write progress.\n"
+    )
+
+
 def run_foreground(
     task: str | None,
     config_path: str | None = None,
     max_iterations: int | None = None,
     default_model: str | None = None,
     state_dir: str | None = None,
+    timeout_seconds: int | None = None,
+    idle_timeout_seconds: int | None = None,
+    cleanup_on_error: str | None = None,
     force: bool = False,
     plan_path: str | None = None,
     plan_only: bool = False,
     plan_model: str | None = None,
+    resume_run: str | None = None,
     ralph_config: RalphConfig | None = None,
 ) -> None:
     """Run a ralphkit task in the foreground (pipe or loop mode)."""
@@ -172,24 +207,75 @@ def run_foreground(
     if state_dir is not None:
         config = replace(config, state_dir=state_dir)
 
+    if timeout_seconds is not None:
+        if timeout_seconds < 1:
+            print_error(
+                f"Config error: timeout_seconds must be >= 1, got {timeout_seconds}"
+            )
+            sys.exit(1)
+        config = replace(config, timeout_seconds=timeout_seconds)
+
+    if idle_timeout_seconds is not None:
+        if idle_timeout_seconds < 1:
+            print_error(
+                "Config error: idle_timeout_seconds must be >= 1, "
+                f"got {idle_timeout_seconds}"
+            )
+            sys.exit(1)
+        config = replace(config, idle_timeout_seconds=idle_timeout_seconds)
+
+    if cleanup_on_error is not None:
+        if cleanup_on_error not in {"full", "light", "skip"}:
+            print_error(
+                "Config error: cleanup_on_error must be one of: full, light, skip"
+            )
+            sys.exit(1)
+        config = replace(config, cleanup_on_error=cleanup_on_error)
+
     if plan_model is not None:
         config = replace(config, plan_model=plan_model)
 
     state = StateDir(config.state_dir)
+    state.setup(resume_run=resume_run)
 
-    if config.pipe:
-        task_content = resolve_task(task) if task else None
-    elif task is None:
-        print_error("task is required for loop mode")
-        sys.exit(1)
-    else:
+    existing_task = state.read_task()
+    if task is not None:
         task_content = resolve_task(task)
+    elif existing_task is not None:
+        task_content = existing_task
+    elif config.pipe:
+        task_content = None
+    else:
+        print_error("task is required for loop mode")
+        raise SystemExit(1)
+
+    if state.resumed and existing_task is not None and task is not None:
+        if task_content != existing_task and not force:
+            print_error(
+                "resume run task does not match the existing task.md. "
+                "Pass --force to overwrite it."
+            )
+            raise SystemExit(1)
 
     start_time = time.time()
+    initial_report_duration = 0.0
 
-    state.setup()
+    if state.resumed:
+        report_path = state.path / "report.json"
+        if report_path.is_file():
+            report = RunReport.load(report_path)
+            initial_report_duration = report.total_duration_s
+            report.outcome = None
+            report.failure_summary = None
+        else:
+            report = RunReport()
+        state.write_resume_marker(str(resume_run))
+    else:
+        report = RunReport()
+
     if task_content is not None:
-        state.write_task(task_content)
+        if not state.resumed or existing_task is None or force:
+            state.write_task(task_content)
 
     # -- Banner --
     is_pipe = bool(config.pipe)
@@ -203,6 +289,7 @@ def run_foreground(
         print_kv("Pipe", _step_names(config.pipe))
     else:
         print_kv("Max iter", str(config.max_iterations))
+        print_kv("Timeout", f"{config.timeout_seconds}s")
         if config.setup:
             print_kv("Setup", _step_names(config.setup))
         print_kv("Loop", _step_names(config.loop))
@@ -225,7 +312,7 @@ def run_foreground(
         confirm = input("Proceed? (y/N) ").strip()
         if confirm.lower() not in ("y", "yes"):
             print_error("Aborted.")
-            sys.exit(1)
+            raise SystemExit(1)
         console.print()
 
     # -- Common template variables --
@@ -238,8 +325,205 @@ def run_foreground(
             "state_dir": str(state.active_path),
         }
 
+    run_failed = False
+    report_finalized = False
+
+    def _step_timeout_settings(step: StepConfig) -> tuple[int, int | None]:
+        timeout_s = step.timeout_seconds or config.timeout_seconds
+        idle_s = (
+            step.idle_timeout_seconds
+            if step.idle_timeout_seconds is not None
+            else config.idle_timeout_seconds
+        )
+        return timeout_s, idle_s
+
+    def _finalize_report() -> None:
+        nonlocal report_finalized
+        if report_finalized:
+            return
+        try:
+            report.total_duration_s = initial_report_duration + (
+                time.time() - start_time
+            )
+            print_report(report)
+            report.save(state.path / "report.json")
+            console.print(f"  [dim]Saved to {state.path / 'report.json'}[/]")
+            report_finalized = True
+        except Exception as e:
+            try:
+                print_warning(f"Failed to save report: {e}")
+            except Exception:
+                pass
+
+    def _write_failure_summary(
+        *,
+        step_name: str | None,
+        phase: str,
+        iteration: int | None,
+        status: str,
+        error_kind: str,
+        error_message: str,
+        diagnostics_path: str | None,
+        transcript_path: str | None = None,
+        elapsed_s: float | None = None,
+    ) -> None:
+        failure_summary = {
+            "step_name": step_name,
+            "phase": phase,
+            "iteration": iteration,
+            "status": status,
+            "error_kind": error_kind,
+            "error_message": error_message,
+            "diagnostics_path": diagnostics_path,
+            "claude_transcript_path": transcript_path,
+            "elapsed_s": elapsed_s,
+        }
+        report.failure_summary = failure_summary
+        state.write_json("last_failure.json", failure_summary)
+        if report.outcome is None:
+            report.outcome = "ERROR"
+
+    def _record_nonstep_failure(
+        *,
+        phase: str,
+        error_kind: str,
+        error_message: str,
+        status: str = "error",
+        step_name: str | None = None,
+        iteration: int | None = None,
+        extra: dict | None = None,
+    ) -> None:
+        nonlocal run_failed
+        run_failed = True
+        diagnostics_path = state.artifact_path(
+            step_name or "run",
+            phase,
+            iteration,
+            suffix="diagnostics.json",
+        )
+        payload = {
+            "step_name": step_name,
+            "phase": phase,
+            "iteration": iteration,
+            "cwd": str(Path.cwd()),
+            "error": {
+                "kind": error_kind,
+                "message": error_message,
+            },
+        }
+        if extra:
+            payload.update(extra)
+        diagnostics_path.write_text(json.dumps(payload, indent=2) + "\n")
+        _write_failure_summary(
+            step_name=step_name,
+            phase=phase,
+            iteration=iteration,
+            status=status,
+            error_kind=error_kind,
+            error_message=error_message,
+            diagnostics_path=str(diagnostics_path),
+        )
+
+    def _exit(
+        code: int,
+        *,
+        outcome: str | None = None,
+        finalize: bool = False,
+    ) -> None:
+        if outcome is not None:
+            report.outcome = outcome
+        if finalize:
+            _finalize_report()
+        raise SystemExit(code)
+
+    def _record_failure(
+        step,
+        model: str,
+        t0: float,
+        phase: str,
+        before_diff: tuple[int, int],
+        error: RuntimeError,
+        iteration: int | None = None,
+    ) -> None:
+        nonlocal run_failed
+        run_failed = True
+        before_add, before_del = before_diff
+        after_add, after_del = git_diff_stat()
+        diagnostics_path = state.artifact_path(
+            step.step_name,
+            phase,
+            iteration,
+            suffix="diagnostics.json",
+        )
+        status = "timeout"
+        error_kind = type(error).__name__
+        timeout_s = None
+        idle_s = None
+        transcript_path = None
+        elapsed_s = time.time() - t0
+        diagnostics: dict = {
+            "step_name": step.step_name,
+            "phase": phase,
+            "iteration": iteration,
+            "model": model,
+            "cwd": str(Path.cwd()),
+            "duration_s": elapsed_s,
+            "lines_added": max(0, after_add - before_add),
+            "lines_deleted": max(0, after_del - before_del),
+            "error": {
+                "message": str(error),
+            },
+        }
+
+        if isinstance(error, ClaudeRunError):
+            error_kind = error.kind
+            status = "timeout" if "timeout" in error.kind else "error"
+            timeout_s = error.timeout_seconds
+            idle_s = error.idle_timeout_seconds
+            transcript_path = error.transcript_path
+            diagnostics["error"] = error.to_dict()
+        else:
+            status = "error"
+            diagnostics["error"]["kind"] = error_kind
+
+        diagnostics_path.write_text(json.dumps(diagnostics, indent=2) + "\n")
+        report.record_step(
+            step_name=step.step_name,
+            model=model,
+            phase=phase,
+            status=status,
+            duration_s=elapsed_s,
+            iteration=iteration,
+            error_kind=error_kind,
+            error_message=str(error),
+            timeout_seconds=timeout_s,
+            idle_timeout_seconds=idle_s,
+            diagnostics_path=str(diagnostics_path),
+            claude_transcript_path=transcript_path,
+            lines_added=max(0, after_add - before_add),
+            lines_deleted=max(0, after_del - before_del),
+        )
+        _write_failure_summary(
+            step_name=step.step_name,
+            phase=phase,
+            iteration=iteration,
+            status=status,
+            error_kind=error_kind,
+            error_message=str(error),
+            diagnostics_path=str(diagnostics_path),
+            transcript_path=transcript_path,
+            elapsed_s=elapsed_s,
+        )
+        if phase in ("setup", "planning") or config.cleanup_on_error != "full":
+            _finalize_report()
+
     def _run_step(
         step: StepConfig,
+        *,
+        phase: str,
+        before_diff: tuple[int, int],
+        t0: float,
+        iteration: int | None = None,
         extra_vars: dict[str, str] | None = None,
         system_suffix: str = "",
     ) -> tuple[str, dict | None]:
@@ -249,25 +533,27 @@ def run_foreground(
             variables.update(extra_vars)
         prompt = _render_prompt(step.task_prompt, variables)
         system = _render_prompt(step.system_prompt, variables)
+        suffixes = []
         if system_suffix:
-            system = system + "\n\n" + system_suffix
+            suffixes.append(system_suffix)
+        if config.checkpoint_policy == "auto":
+            suffixes.append(_checkpoint_suffix(str(state.active_path), step.step_name))
+        if suffixes:
+            system = system + "\n\n" + "\n\n".join(suffixes)
         model = variables["model"]
-        result = _run_phase(prompt, model, system)
+        timeout_s, idle_s = _step_timeout_settings(step)
+        result = _run_phase(
+            prompt,
+            model,
+            system,
+            timeout_seconds=timeout_s,
+            idle_timeout_seconds=idle_s,
+            cwd=str(Path.cwd()),
+            on_error=lambda error: _record_failure(
+                step, model, t0, phase, before_diff, error, iteration
+            ),
+        )
         return model, result
-
-    report = RunReport()
-
-    def _finalize_report():
-        try:
-            report.total_duration_s = time.time() - start_time
-            print_report(report)
-            report.save(state.path / "report.json")
-            console.print(f"  [dim]Saved to {state.path / 'report.json'}[/]")
-        except Exception as e:
-            try:
-                print_warning(f"Failed to save report: {e}")
-            except Exception:
-                pass
 
     def _record_step(step, model, claude_out, t0, phase, before_diff, iteration=None):
         before_add, before_del = before_diff
@@ -276,9 +562,15 @@ def run_foreground(
             step_name=step.step_name,
             model=model,
             phase=phase,
+            status="success",
             duration_s=time.time() - t0,
             iteration=iteration,
             claude_output=claude_out,
+            claude_transcript_path=(
+                claude_out.get("_ralphkit_transcript_path")
+                if isinstance(claude_out, dict)
+                else None
+            ),
             lines_added=max(0, after_add - before_add),
             lines_deleted=max(0, after_del - before_del),
         )
@@ -286,11 +578,15 @@ def run_foreground(
     def _check_blocked() -> None:
         blocked = state.is_blocked()
         if blocked:
-            report.outcome = "BLOCKED"
+            _record_nonstep_failure(
+                phase="blocked",
+                error_kind="blocked",
+                error_message=blocked,
+            )
             console.print()
             console.print("[error]Blocked:[/]")
             console.print(blocked)
-            sys.exit(1)
+            _exit(1, outcome="BLOCKED")
 
     if is_pipe:
         # -- PIPE execution --
@@ -332,7 +628,12 @@ def run_foreground(
                 )
 
                 model, claude_out = _run_step(
-                    step, extra_vars=pipe_vars, system_suffix=handoff
+                    step,
+                    phase="pipe",
+                    before_diff=before_diff,
+                    t0=t0,
+                    extra_vars=pipe_vars,
+                    system_suffix=handoff,
                 )
                 _record_step(step, model, claude_out, t0, "pipe", before_diff)
                 print_step_done(fmt_duration(time.time() - t0))
@@ -344,7 +645,7 @@ def run_foreground(
             print_outcome(
                 f"PIPE COMPLETE \u2014 {total_steps} steps finished", success=True
             )
-            sys.exit(0)
+            _exit(0, outcome="PIPE_COMPLETE")
         finally:
             if report.outcome is None:
                 report.outcome = "ERROR"
@@ -358,7 +659,12 @@ def run_foreground(
             print_step_start(idx, total_setup, step.step_name)
             before_diff = git_diff_stat()
             t0 = time.time()
-            model, claude_out = _run_step(step)
+            model, claude_out = _run_step(
+                step,
+                phase="setup",
+                before_diff=before_diff,
+                t0=t0,
+            )
             _record_step(step, model, claude_out, t0, "setup", before_diff)
             print_step_done(fmt_duration(time.time() - t0))
         console.print()
@@ -370,16 +676,46 @@ def run_foreground(
         pp = Path(plan_path)
         if not pp.is_file():
             print_error(f"Plan file not found: {plan_path}")
-            sys.exit(1)
+            _record_nonstep_failure(
+                phase="planning",
+                error_kind="plan_not_found",
+                error_message=f"Plan file not found: {plan_path}",
+            )
+            _exit(1, outcome="ERROR", finalize=True)
         try:
             plan = json.loads(pp.read_text())
         except (json.JSONDecodeError, TypeError) as e:
             print_error(f"Invalid plan file: {e}")
-            sys.exit(1)
+            _record_nonstep_failure(
+                phase="planning",
+                error_kind="invalid_plan_file",
+                error_message=f"Invalid plan file: {e}",
+            )
+            _exit(1, outcome="ERROR", finalize=True)
         err = _validate_plan(plan)
         if err:
             print_error(f"Invalid plan file: {err}")
-            sys.exit(1)
+            _record_nonstep_failure(
+                phase="planning",
+                error_kind="invalid_plan_file",
+                error_message=f"Invalid plan file: {err}",
+            )
+            _exit(1, outcome="ERROR", finalize=True)
+        if state.resumed and (state.path / "tickets.json").exists() and not force:
+            current_plan = state.read_plan()
+            if current_plan != plan:
+                print_error(
+                    "resume run plan does not match the existing tickets.json. "
+                    "Pass --force to overwrite it."
+                )
+                _record_nonstep_failure(
+                    phase="planning",
+                    error_kind="resume_plan_mismatch",
+                    error_message=(
+                        "resume run plan does not match the existing tickets.json."
+                    ),
+                )
+                _exit(1, outcome="ERROR", finalize=True)
         state.copy_plan(pp)
     else:
         # Run the planner agent
@@ -397,7 +733,17 @@ def run_foreground(
         planner_vars["model"] = planner_model
         prompt = _render_prompt(planner_step.task_prompt, planner_vars)
         system = _render_prompt(planner_step.system_prompt, planner_vars)
-        claude_out = _run_phase(prompt, planner_model, system)
+        claude_out = _run_phase(
+            prompt,
+            planner_model,
+            system,
+            timeout_seconds=config.timeout_seconds,
+            idle_timeout_seconds=config.idle_timeout_seconds,
+            cwd=str(Path.cwd()),
+            on_error=lambda error: _record_failure(
+                planner_step, planner_model, t0, "planning", before_diff, error
+            ),
+        )
         _record_step(
             planner_step, planner_model, claude_out, t0, "planning", before_diff
         )
@@ -411,7 +757,12 @@ def run_foreground(
                 f"Planning failed: {err}. "
                 "Try --plan-only to debug, or provide your own with --plan."
             )
-            sys.exit(1)
+            _record_nonstep_failure(
+                phase="planning",
+                error_kind="invalid_generated_plan",
+                error_message=f"Planning failed: {err}",
+            )
+            _exit(1, outcome="ERROR", finalize=True)
 
     # Show plan summary
     items = plan.get("items", [])
@@ -426,7 +777,7 @@ def run_foreground(
         if not (state.path / "tickets.json").exists():
             state.write_plan(plan)
         console.print(f"  Plan written to {state.path / 'tickets.json'}")
-        sys.exit(0)
+        _exit(0, outcome="PLAN_ONLY", finalize=True)
 
     # -- LOOP phase (with cleanup in finally) --
     total_loop_steps = len(config.loop)
@@ -457,7 +808,14 @@ def run_foreground(
                 print_step_start(idx, total_loop_steps, step.step_name, step_model)
                 before_diff = git_diff_stat()
                 t0 = time.time()
-                model, claude_out = _run_step(step, loop_vars)
+                model, claude_out = _run_step(
+                    step,
+                    phase="loop",
+                    before_diff=before_diff,
+                    t0=t0,
+                    iteration=i,
+                    extra_vars=loop_vars,
+                )
                 _record_step(
                     step, model, claude_out, t0, "loop", before_diff, iteration=i
                 )
@@ -468,9 +826,14 @@ def run_foreground(
             # Re-read plan after worker runs (1 file read)
             plan = state.read_plan()
             if plan is None:
-                report.outcome = "ERROR"
                 print_error("Worker corrupted tickets.json (invalid JSON).")
-                sys.exit(1)
+                _record_nonstep_failure(
+                    phase="loop",
+                    error_kind="invalid_plan_json",
+                    error_message="Worker corrupted tickets.json (invalid JSON).",
+                    iteration=i,
+                )
+                _exit(1, outcome="ERROR")
 
             plan_items = plan.get("items", [])
             done_count = sum(1 for it in plan_items if it.get("done", False))
@@ -492,7 +855,7 @@ def run_foreground(
                     f"COMPLETE \u2014 All {total_count} items done in {i} iteration(s)!",
                     success=True,
                 )
-                sys.exit(0)
+                _exit(0, outcome="COMPLETE")
 
             state.clean_for_next_iteration()
 
@@ -505,12 +868,12 @@ def run_foreground(
             f"{report.items_completed}/{report.items_total} items completed.",
             success=False,
         )
-        sys.exit(1)
+        _exit(1, outcome="MAX_ITERATIONS")
     finally:
         if report.outcome is None:
             report.outcome = "ERROR"
         # -- CLEANUP phase (always runs) --
-        if config.cleanup:
+        if config.cleanup and (not run_failed or config.cleanup_on_error == "full"):
             console.print()
             print_rule("Cleanup")
             total_cleanup = len(config.cleanup)
@@ -519,12 +882,25 @@ def run_foreground(
                 before_diff = git_diff_stat()
                 t0 = time.time()
                 try:
-                    model, claude_out = _run_step(step)
+                    model, claude_out = _run_step(
+                        step,
+                        phase="cleanup",
+                        before_diff=before_diff,
+                        t0=t0,
+                    )
                     _record_step(step, model, claude_out, t0, "cleanup", before_diff)
                     print_step_done(fmt_duration(time.time() - t0))
                 except SystemExit:
                     print_warning(
                         f"Cleanup step '{step.step_name}' failed, continuing..."
                     )
+            console.print()
+        elif config.cleanup and run_failed and config.cleanup_on_error == "light":
+            console.print()
+            print_warning("Skipping Claude cleanup steps due to cleanup_on_error=light.")
+            console.print()
+        elif config.cleanup and run_failed and config.cleanup_on_error == "skip":
+            console.print()
+            print_warning("Skipping cleanup phase due to cleanup_on_error=skip.")
             console.print()
         _finalize_report()
