@@ -93,25 +93,30 @@ def submit_job(
                 f"Working directory does not exist on '{host}': {working_dir}"
             )
 
+    # Resolve remote home so paths in ralph_args are absolute
+    # ($HOME in shlex.join gets single-quoted, preventing shell expansion)
+    remote_home = _ssh_run(host, "echo $HOME").stdout.strip()
+    logs_dir = f"{remote_home}/.local/share/ralphkit/logs"
+
     # Ensure logs directory exists (once, before any uploads)
-    _ssh_run(host, f"mkdir -p {LOGS_DIR_SHELL}")
+    _ssh_run(host, f"mkdir -p {shlex.quote(logs_dir)}")
 
     # Upload config file if provided
     if config_content is not None:
-        config_path = f"{LOGS_DIR_SHELL}/{job_id}.config.yaml"
+        config_path = f"{logs_dir}/{job_id}.config.yaml"
         _ssh_run(
             host,
-            f"cat > {config_path}",
+            f"cat > {shlex.quote(config_path)}",
             input=config_content,
         )
         ralph_args = ralph_args + ["--config", config_path]
 
     # Upload plan file if provided
     if plan_content is not None:
-        plan_path = f"{LOGS_DIR_SHELL}/{job_id}.tickets.json"
+        plan_path = f"{logs_dir}/{job_id}.tickets.json"
         _ssh_run(
             host,
-            f"cat > {plan_path}",
+            f"cat > {shlex.quote(plan_path)}",
             input=plan_content,
         )
         ralph_args = ralph_args + ["--plan", plan_path]
