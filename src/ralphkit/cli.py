@@ -34,6 +34,30 @@ HostOpt = Annotated[
 MaxIterOpt = Annotated[
     Optional[int], typer.Option("--max-iterations", help="Override max iterations")
 ]
+TimeoutOpt = Annotated[
+    Optional[int], typer.Option("--timeout-seconds", help="Override hard timeout")
+]
+IdleTimeoutOpt = Annotated[
+    Optional[int],
+    typer.Option(
+        "--idle-timeout-seconds", help="Override idle timeout (disabled by default)"
+    ),
+]
+CleanupOnErrorOpt = Annotated[
+    Optional[str],
+    typer.Option(
+        "--cleanup-on-error",
+        help="Cleanup policy after a failure: full, light, or skip",
+    ),
+]
+IsolationOpt = Annotated[
+    Optional[str],
+    typer.Option("--isolation", help="Isolation mode for submitted jobs"),
+]
+ResumeRunOpt = Annotated[
+    Optional[str],
+    typer.Option("--resume-run", help="Reuse an existing run directory"),
+]
 WorkingDirOpt = Annotated[
     Optional[str],
     typer.Option("--working-dir", help="Working directory for background job"),
@@ -106,9 +130,14 @@ def _dispatch(
     ralph_config: "RalphConfig | None" = None,
     config_file: Path | None = None,
     max_iterations: int | None = None,
+    timeout_seconds: int | None = None,
+    idle_timeout_seconds: int | None = None,
+    cleanup_on_error: str | None = None,
+    isolation: str | None = None,
     plan_path: str | None = None,
     plan_only: bool = False,
     plan_model: str | None = None,
+    resume_run: str | None = None,
     working_dir: str | None = None,
     ralph_version: str | None = None,
 ) -> None:
@@ -136,10 +165,14 @@ def _dispatch(
             max_iterations=max_iterations,
             default_model=default_model,
             state_dir=state_dir,
+            timeout_seconds=timeout_seconds,
+            idle_timeout_seconds=idle_timeout_seconds,
+            cleanup_on_error=cleanup_on_error,
             force=force,
             plan_path=plan_path,
             plan_only=plan_only,
             plan_model=plan_model,
+            resume_run=resume_run,
             ralph_config=ralph_config,
         )
         return
@@ -151,6 +184,7 @@ def _dispatch(
     resolved_task = resolve_task(task) if task else None
     job_id = make_job_id(resolved_task or "job")
     is_remote = _is_remote(host)
+    effective_working_dir = working_dir or str(Path.cwd())
 
     # Build CLI args for the background subcommand
     args: list[str] = []
@@ -160,16 +194,26 @@ def _dispatch(
         args += ["--config", str(config_file.resolve())]
     if max_iterations is not None:
         args += ["--max-iterations", str(max_iterations)]
+    if timeout_seconds is not None:
+        args += ["--timeout-seconds", str(timeout_seconds)]
+    if idle_timeout_seconds is not None:
+        args += ["--idle-timeout-seconds", str(idle_timeout_seconds)]
     if default_model:
         args += ["--default-model", default_model]
     if state_dir:
         args += ["--state-dir", state_dir]
+    if cleanup_on_error:
+        args += ["--cleanup-on-error", cleanup_on_error]
+    if isolation:
+        args += ["--isolation", isolation]
     if plan_model:
         args += ["--plan-model", plan_model]
     if plan_path and not is_remote:
         args += ["--plan", plan_path]
     if plan_only:
         args.append("--plan-only")
+    if resume_run:
+        args += ["--resume-run", resume_run]
     args.append("--force")
 
     config_content = config_file.read_text() if (is_remote and config_file) else None
@@ -192,17 +236,24 @@ def _dispatch(
             job_id,
             args,
             subcommand=subcommand,
-            working_dir=working_dir,
+            working_dir=effective_working_dir,
             ralph_version=ralph_version,
+            isolation=isolation,
             config_content=config_content,
             plan_content=plan_content,
         )
     else:
         from ralphkit.local import submit_local
 
-        submit_local(job_id, args, subcommand=subcommand, working_dir=working_dir)
+        submit_local(
+            job_id,
+            args,
+            subcommand=subcommand,
+            working_dir=effective_working_dir,
+            isolation=isolation,
+        )
 
-    _print_submit_info(job_id, host=host, working_dir=working_dir)
+    _print_submit_info(job_id, host=host, working_dir=effective_working_dir)
 
 
 # -- Workflow commands --
@@ -217,6 +268,11 @@ def _pipe_workflow(
     state_dir: str | None,
     host: str | None,
     force: bool,
+    timeout_seconds: int | None,
+    idle_timeout_seconds: int | None,
+    cleanup_on_error: str | None,
+    isolation: str | None,
+    resume_run: str | None,
     working_dir: str | None,
     ralph_version: str | None,
 ) -> None:
@@ -244,6 +300,11 @@ def _pipe_workflow(
         ralph_config=ralph_config,
         default_model=default_model,
         state_dir=state_dir,
+        timeout_seconds=timeout_seconds,
+        idle_timeout_seconds=idle_timeout_seconds,
+        cleanup_on_error=cleanup_on_error,
+        isolation=isolation,
+        resume_run=resume_run,
         working_dir=working_dir,
         ralph_version=ralph_version,
     )
@@ -259,6 +320,10 @@ def build(
     host: HostOpt = None,
     force: ForceOpt = False,
     max_iterations: MaxIterOpt = None,
+    timeout_seconds: TimeoutOpt = None,
+    idle_timeout_seconds: IdleTimeoutOpt = None,
+    cleanup_on_error: CleanupOnErrorOpt = None,
+    isolation: IsolationOpt = None,
     plan_model: Annotated[
         Optional[str],
         typer.Option("--plan-model", help="Override model for planning step"),
@@ -271,6 +336,7 @@ def build(
         bool,
         typer.Option("--plan-only", help="Generate plan and exit"),
     ] = False,
+    resume_run: ResumeRunOpt = None,
     working_dir: WorkingDirOpt = None,
     ralph_version: RalphVersionOpt = None,
 ) -> None:
@@ -301,9 +367,14 @@ def build(
         default_model=default_model,
         state_dir=state_dir,
         max_iterations=max_iterations,
+        timeout_seconds=timeout_seconds,
+        idle_timeout_seconds=idle_timeout_seconds,
+        cleanup_on_error=cleanup_on_error,
+        isolation=isolation,
         plan_path=str(plan) if plan else None,
         plan_only=plan_only,
         plan_model=plan_model,
+        resume_run=resume_run,
         working_dir=working_dir,
         ralph_version=ralph_version,
     )
@@ -318,6 +389,11 @@ def fix(
     state_dir: StateDirOpt = None,
     host: HostOpt = None,
     force: ForceOpt = False,
+    timeout_seconds: TimeoutOpt = None,
+    idle_timeout_seconds: IdleTimeoutOpt = None,
+    cleanup_on_error: CleanupOnErrorOpt = None,
+    isolation: IsolationOpt = None,
+    resume_run: ResumeRunOpt = None,
     working_dir: WorkingDirOpt = None,
     ralph_version: RalphVersionOpt = None,
 ) -> None:
@@ -332,6 +408,11 @@ def fix(
         state_dir=state_dir,
         host=host,
         force=force,
+        timeout_seconds=timeout_seconds,
+        idle_timeout_seconds=idle_timeout_seconds,
+        cleanup_on_error=cleanup_on_error,
+        isolation=isolation,
+        resume_run=resume_run,
         working_dir=working_dir,
         ralph_version=ralph_version,
     )
@@ -346,6 +427,11 @@ def research(
     state_dir: StateDirOpt = None,
     host: HostOpt = None,
     force: ForceOpt = False,
+    timeout_seconds: TimeoutOpt = None,
+    idle_timeout_seconds: IdleTimeoutOpt = None,
+    cleanup_on_error: CleanupOnErrorOpt = None,
+    isolation: IsolationOpt = None,
+    resume_run: ResumeRunOpt = None,
     working_dir: WorkingDirOpt = None,
     ralph_version: RalphVersionOpt = None,
 ) -> None:
@@ -360,6 +446,11 @@ def research(
         state_dir=state_dir,
         host=host,
         force=force,
+        timeout_seconds=timeout_seconds,
+        idle_timeout_seconds=idle_timeout_seconds,
+        cleanup_on_error=cleanup_on_error,
+        isolation=isolation,
+        resume_run=resume_run,
         working_dir=working_dir,
         ralph_version=ralph_version,
     )
@@ -374,6 +465,11 @@ def plan(
     state_dir: StateDirOpt = None,
     host: HostOpt = None,
     force: ForceOpt = False,
+    timeout_seconds: TimeoutOpt = None,
+    idle_timeout_seconds: IdleTimeoutOpt = None,
+    cleanup_on_error: CleanupOnErrorOpt = None,
+    isolation: IsolationOpt = None,
+    resume_run: ResumeRunOpt = None,
     working_dir: WorkingDirOpt = None,
     ralph_version: RalphVersionOpt = None,
 ) -> None:
@@ -388,6 +484,11 @@ def plan(
         state_dir=state_dir,
         host=host,
         force=force,
+        timeout_seconds=timeout_seconds,
+        idle_timeout_seconds=idle_timeout_seconds,
+        cleanup_on_error=cleanup_on_error,
+        isolation=isolation,
+        resume_run=resume_run,
         working_dir=working_dir,
         ralph_version=ralph_version,
     )
@@ -402,6 +503,11 @@ def big_swing(
     state_dir: StateDirOpt = None,
     host: HostOpt = None,
     force: ForceOpt = False,
+    timeout_seconds: TimeoutOpt = None,
+    idle_timeout_seconds: IdleTimeoutOpt = None,
+    cleanup_on_error: CleanupOnErrorOpt = None,
+    isolation: IsolationOpt = None,
+    resume_run: ResumeRunOpt = None,
     working_dir: WorkingDirOpt = None,
     ralph_version: RalphVersionOpt = None,
 ) -> None:
@@ -416,6 +522,11 @@ def big_swing(
         state_dir=state_dir,
         host=host,
         force=force,
+        timeout_seconds=timeout_seconds,
+        idle_timeout_seconds=idle_timeout_seconds,
+        cleanup_on_error=cleanup_on_error,
+        isolation=isolation,
+        resume_run=resume_run,
         working_dir=working_dir,
         ralph_version=ralph_version,
     )
@@ -444,6 +555,11 @@ def pipe(
     state_dir: StateDirOpt = None,
     host: HostOpt = None,
     force: ForceOpt = False,
+    timeout_seconds: TimeoutOpt = None,
+    idle_timeout_seconds: IdleTimeoutOpt = None,
+    cleanup_on_error: CleanupOnErrorOpt = None,
+    isolation: IsolationOpt = None,
+    resume_run: ResumeRunOpt = None,
     working_dir: WorkingDirOpt = None,
     ralph_version: RalphVersionOpt = None,
 ) -> None:
@@ -456,6 +572,11 @@ def pipe(
         config_file=config,
         default_model=default_model,
         state_dir=state_dir,
+        timeout_seconds=timeout_seconds,
+        idle_timeout_seconds=idle_timeout_seconds,
+        cleanup_on_error=cleanup_on_error,
+        isolation=isolation,
+        resume_run=resume_run,
         working_dir=working_dir,
         ralph_version=ralph_version,
     )
@@ -482,6 +603,10 @@ def loop(
     host: HostOpt = None,
     force: ForceOpt = False,
     max_iterations: MaxIterOpt = None,
+    timeout_seconds: TimeoutOpt = None,
+    idle_timeout_seconds: IdleTimeoutOpt = None,
+    cleanup_on_error: CleanupOnErrorOpt = None,
+    isolation: IsolationOpt = None,
     plan_model: Annotated[
         Optional[str],
         typer.Option("--plan-model", help="Override model for planning step"),
@@ -494,6 +619,7 @@ def loop(
         bool,
         typer.Option("--plan-only", help="Generate plan and exit"),
     ] = False,
+    resume_run: ResumeRunOpt = None,
     working_dir: WorkingDirOpt = None,
     ralph_version: RalphVersionOpt = None,
 ) -> None:
@@ -507,9 +633,14 @@ def loop(
         default_model=default_model,
         state_dir=state_dir,
         max_iterations=max_iterations,
+        timeout_seconds=timeout_seconds,
+        idle_timeout_seconds=idle_timeout_seconds,
+        cleanup_on_error=cleanup_on_error,
+        isolation=isolation,
         plan_path=str(plan) if plan else None,
         plan_only=plan_only,
         plan_model=plan_model,
+        resume_run=resume_run,
         working_dir=working_dir,
         ralph_version=ralph_version,
     )

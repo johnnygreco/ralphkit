@@ -414,8 +414,9 @@ class TestBuildLoop:
         saved_plan = json.loads((run_dir / "tickets.json").read_text())
         assert len(saved_plan["items"]) == 1
 
-        # No report.json — engine exits before running any steps
-        assert not (run_dir / "report.json").is_file()
+        report = json.loads((run_dir / "report.json").read_text())
+        assert report["outcome"] == "PLAN_ONLY"
+        assert report["steps"] == []
 
     def test_planning_fails_gracefully(self, env, tmp_path):
         """Without --plan, planner runs but fake claude can't write tickets.json."""

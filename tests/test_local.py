@@ -1,4 +1,5 @@
 import subprocess
+import json
 from unittest.mock import patch
 
 import pytest
@@ -38,12 +39,25 @@ def test_submit_local_script_file_is_executable(mock_run, mock_which, tmp_path):
     mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
     job_id = "rk-test-0307-120000-abcd"
     script_file = tmp_path / f"{job_id}.sh"
-    with patch("ralphkit.local.script_path_local", return_value=script_file):
+    meta_file = tmp_path / f"{job_id}.meta.json"
+    job_dir = tmp_path / job_id
+    with (
+        patch("ralphkit.local.script_path_local", return_value=script_file),
+        patch("ralphkit.local.meta_path_local", return_value=meta_file),
+        patch("ralphkit.local.job_path_local", return_value=job_dir),
+    ):
         submit_local(job_id, ["pipe.yml"], subcommand="pipe")
 
     assert script_file.exists()
     # Check permissions are 0o700 (owner-only)
     assert script_file.stat().st_mode & 0o777 == 0o700
+    assert job_dir.exists()
+    meta = json.loads(meta_file.read_text())
+    assert meta["job_id"] == job_id
+    assert meta["subcommand"] == "pipe"
+    assert meta["isolation"] == "shared"
+    assert meta["scratch_dir"] == str(job_dir)
+    assert "submitted_at" in meta
 
 
 @patch("ralphkit.local.shutil.which", return_value="/usr/bin/tmux")
@@ -52,12 +66,38 @@ def test_submit_local_uses_subcommand_in_script(mock_run, mock_which, tmp_path):
     mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
     job_id = "rk-test-0307-120000-abcd"
     script_file = tmp_path / f"{job_id}.sh"
-    with patch("ralphkit.local.script_path_local", return_value=script_file):
-        submit_local(job_id, ["task.md", "--force"], subcommand="build")
+    meta_file = tmp_path / f"{job_id}.meta.json"
+    job_dir = tmp_path / job_id
+    with (
+        patch("ralphkit.local.script_path_local", return_value=script_file),
+        patch("ralphkit.local.meta_path_local", return_value=meta_file),
+        patch("ralphkit.local.job_path_local", return_value=job_dir),
+    ):
+        submit_local(
+            job_id,
+            [
+                "task.md",
+                "--force",
+                "--timeout-seconds",
+                "900",
+                "--idle-timeout-seconds",
+                "60",
+                "--cleanup-on-error",
+                "skip",
+                "--resume-run",
+                "7",
+            ],
+            subcommand="build",
+        )
 
     script_content = script_file.read_text()
     assert "ralphkit build task.md --force" in script_content
     assert "ralphkit run" not in script_content
+    meta = json.loads(meta_file.read_text())
+    assert meta["timeout_seconds"] == 900
+    assert meta["idle_timeout_seconds"] == 60
+    assert meta["cleanup_on_error"] == "skip"
+    assert meta["resume_run"] == "7"
 
 
 @patch("ralphkit.local.subprocess.run")

@@ -14,12 +14,14 @@ def test_build_job_script_with_working_dir():
     script = build_job_script(
         "rk-test-0307-120000-abcd", "ralph run pipe.yml", working_dir="/tmp/work"
     )
-    assert "cd /tmp/work || exit 1" in script or "cd '/tmp/work' || exit 1" in script
+    assert "ORIG_DIR=/tmp/work" in script or "ORIG_DIR='/tmp/work'" in script
+    assert 'cd "$ORIG_DIR" || exit 1' in script
 
 
 def test_build_job_script_without_optional_args():
     script = build_job_script("rk-test-0307-120000-abcd", "ralph run pipe.yml")
-    assert "cd " not in script
+    assert 'ORIG_DIR="$PWD"' in script
+    assert 'cd "$ORIG_DIR" || exit 1' in script
 
 
 def test_build_job_script_exports_path():

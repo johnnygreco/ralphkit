@@ -1,10 +1,13 @@
+import json
 import re
 import shlex
 import subprocess
+from datetime import datetime
 
 from ralphkit.tmux import (
     LOGS_DIR_SHELL,
     TMUX_LIST_FORMAT,
+    build_submission_metadata,
     build_job_script,
     parse_session_list,
 )
@@ -73,6 +76,7 @@ def submit_job(
     subcommand: str,
     working_dir: str | None = None,
     ralph_version: str | None = None,
+    isolation: str | None = None,
     config_content: str | None = None,
     plan_content: str | None = None,
 ) -> None:
@@ -121,12 +125,37 @@ def submit_job(
         )
         ralph_args = ralph_args + ["--plan", plan_path]
 
+    meta_content = (
+        json.dumps(
+            build_submission_metadata(
+                job_id=job_id,
+                subcommand=subcommand,
+                ralph_args=ralph_args,
+                working_dir=working_dir,
+                isolation=isolation,
+                scratch_dir=f"{remote_home}/.local/share/ralphkit/jobs/{job_id}",
+            )
+            | {
+                "submitted_at": datetime.now().isoformat(),
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    meta_path = f"{logs_dir}/{job_id}.meta.json"
+    _ssh_run(
+        host,
+        f"cat > {shlex.quote(meta_path)}",
+        input=meta_content,
+    )
+
     # Generate job script
     ralph_cmd = _ralph_cmd(ralph_args, ralph_version, subcommand=subcommand)
     script = build_job_script(
         job_id,
         ralph_cmd,
         working_dir=working_dir,
+        isolation=isolation,
     )
 
     # Upload script via ssh stdin pipe

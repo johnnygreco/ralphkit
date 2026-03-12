@@ -1,20 +1,45 @@
 import subprocess
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 import pytest
 
-from ralphkit.runner import TIMEOUT_SECONDS, run_claude
+import ralphkit.runner as runner
+from ralphkit.runner import ClaudeRunError, run_claude
 
 
-def test_timeout_seconds_constant():
-    assert TIMEOUT_SECONDS == 900
+def _proc(*, returncode=0, stdout='{"ok": true}', stderr="") -> Mock:
+    proc = Mock()
+    proc.communicate.return_value = (stdout, stderr)
+    proc.returncode = returncode
+    proc.poll.return_value = returncode
+    return proc
 
 
-@patch("ralphkit.runner.subprocess.run")
-def test_run_claude_calls_subprocess_with_correct_args(mock_run):
-    run_claude("do stuff", "opus", "be helpful")
-    mock_run.assert_called_once()
-    args, kwargs = mock_run.call_args
+@patch.object(runner, "_latest_transcript", return_value=("/tmp/transcript.jsonl", 1.0))
+@patch.object(runner.subprocess, "Popen")
+def test_run_claude_success_invokes_popen_with_expected_options(
+    mock_popen, mock_latest, monkeypatch
+):
+    monkeypatch.setenv("RALPHKIT_TEST_VAR", "hello")
+    monkeypatch.setenv("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "0")
+    proc = _proc(stdout='{"type":"result","num_turns":1}')
+    mock_popen.return_value = proc
+
+    result = run_claude(
+        "do stuff",
+        "opus",
+        "be helpful",
+        cwd=Path("/tmp/worktree"),
+    )
+
+    assert result == {
+        "type": "result",
+        "num_turns": 1,
+        "_ralphkit_transcript_path": "/tmp/transcript.jsonl",
+    }
+    mock_popen.assert_called_once()
+    args, kwargs = mock_popen.call_args
     assert args[0] == [
         "claude",
         "-p",
@@ -27,92 +52,111 @@ def test_run_claude_calls_subprocess_with_correct_args(mock_run):
         "--output-format",
         "json",
     ]
-
-
-@patch("ralphkit.runner.subprocess.run")
-def test_run_claude_passes_subprocess_options(mock_run):
-    run_claude("p", "m", "s")
-    _, kwargs = mock_run.call_args
     assert kwargs["stdout"] is subprocess.PIPE
-    assert kwargs["stderr"] is subprocess.DEVNULL
-    assert kwargs["check"] is True
-    assert kwargs["timeout"] == TIMEOUT_SECONDS
+    assert kwargs["stderr"] is subprocess.PIPE
+    assert kwargs["text"] is True
+    assert kwargs["encoding"] == "utf-8"
+    assert kwargs["errors"] == "replace"
+    assert kwargs["cwd"] == "/tmp/worktree"
+    assert kwargs["env"]["RALPHKIT_TEST_VAR"] == "hello"
+    assert kwargs["env"]["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
+    mock_latest.assert_called()
 
 
-@patch("ralphkit.runner.subprocess.run")
-def test_run_claude_env_includes_disable_auto_memory(mock_run):
-    run_claude("p", "m", "s")
-    env = mock_run.call_args[1]["env"]
-    assert env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
-
-
-@patch("ralphkit.runner.subprocess.run")
-def test_run_claude_env_inherits_os_environ(mock_run, monkeypatch):
-    monkeypatch.setenv("RALPHKIT_TEST_VAR", "hello")
-    run_claude("p", "m", "s")
-    env = mock_run.call_args[1]["env"]
-    assert env["RALPHKIT_TEST_VAR"] == "hello"
-
-
-@patch("ralphkit.runner.subprocess.run")
-def test_run_claude_env_overrides_existing_disable_auto_memory(mock_run, monkeypatch):
-    monkeypatch.setenv("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "0")
-    run_claude("p", "m", "s")
-    env = mock_run.call_args[1]["env"]
-    assert env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
-
-
-@patch("ralphkit.runner.subprocess.run")
-def test_run_claude_success_returns_parsed_json(mock_run):
-    mock_run.return_value = subprocess.CompletedProcess(
-        args=[], returncode=0, stdout=b'{"type":"result","num_turns":1}'
-    )
-    result = run_claude("p", "m", "s")
-    assert result == {"type": "result", "num_turns": 1}
-
-
-@patch("ralphkit.runner.subprocess.run")
-def test_run_claude_returns_none_on_invalid_json(mock_run):
-    mock_run.return_value = subprocess.CompletedProcess(
-        args=[], returncode=0, stdout=b"not json"
-    )
+@patch.object(runner, "_latest_transcript", return_value=(None, None))
+@patch.object(runner.subprocess, "Popen")
+def test_run_claude_returns_none_for_invalid_json(mock_popen, mock_latest):
+    mock_popen.return_value = _proc(stdout="not json")
     assert run_claude("p", "m", "s") is None
+    mock_latest.assert_called_once()
 
 
-@patch("ralphkit.runner.subprocess.run")
-def test_run_claude_returns_none_on_empty_stdout(mock_run):
-    mock_run.return_value = subprocess.CompletedProcess(
-        args=[], returncode=0, stdout=b""
+@patch.object(runner.subprocess, "Popen", side_effect=FileNotFoundError)
+def test_run_claude_raises_not_found_error(mock_popen):
+    with pytest.raises(ClaudeRunError, match="'claude' command not found") as exc_info:
+        run_claude("p", "m", "s")
+    error = exc_info.value
+    assert error.kind == "not_found"
+    assert error.elapsed_s == 0.0
+
+
+@patch.object(runner, "_latest_transcript", return_value=("/tmp/session.jsonl", 5.0))
+@patch.object(runner.subprocess, "Popen")
+def test_run_claude_raises_process_error_with_diagnostics(mock_popen, mock_latest):
+    mock_popen.return_value = _proc(
+        returncode=42,
+        stdout="partial stdout",
+        stderr="partial stderr",
     )
-    assert run_claude("p", "m", "s") is None
 
-
-@patch("ralphkit.runner.subprocess.run", side_effect=FileNotFoundError)
-def test_run_claude_raises_on_file_not_found(mock_run):
-    with pytest.raises(RuntimeError, match="'claude' command not found"):
+    with pytest.raises(ClaudeRunError, match="exited with code 42") as exc_info:
         run_claude("p", "m", "s")
 
-
-@patch(
-    "ralphkit.runner.subprocess.run",
-    side_effect=subprocess.TimeoutExpired("claude", 900),
-)
-def test_run_claude_raises_on_timeout(mock_run):
-    with pytest.raises(RuntimeError, match="timed out after 900s"):
-        run_claude("p", "m", "s")
-
-
-@pytest.mark.parametrize("code", [1, 42])
-def test_run_claude_raises_on_called_process_error(code):
-    with patch(
-        "ralphkit.runner.subprocess.run",
-        side_effect=subprocess.CalledProcessError(code, "claude"),
-    ):
-        with pytest.raises(RuntimeError, match=f"exited with code {code}"):
-            run_claude("p", "m", "s")
+    error = exc_info.value
+    assert error.kind == "process_error"
+    assert error.returncode == 42
+    assert error.stdout_tail == "partial stdout"
+    assert error.stderr_tail == "partial stderr"
+    assert error.transcript_path == "/tmp/session.jsonl"
+    assert error.to_dict()["kind"] == "process_error"
+    mock_latest.assert_called_once()
 
 
-@patch("ralphkit.runner.subprocess.run", side_effect=PermissionError("nope"))
-def test_run_claude_does_not_catch_unexpected_exceptions(mock_run):
-    with pytest.raises(PermissionError):
+@patch.object(runner, "_stop_process")
+@patch.object(runner, "_latest_transcript", return_value=(None, None))
+@patch.object(runner.time, "monotonic", side_effect=[0.0, 2.5])
+@patch.object(runner.subprocess, "Popen")
+def test_run_claude_raises_hard_timeout(
+    mock_popen, mock_monotonic, mock_latest, mock_stop
+):
+    proc = Mock()
+    proc.communicate.side_effect = subprocess.TimeoutExpired(
+        "claude",
+        runner.POLL_SECONDS,
+        output="partial stdout",
+        stderr="partial stderr",
+    )
+    proc.poll.return_value = None
+    mock_popen.return_value = proc
+
+    with pytest.raises(ClaudeRunError, match="timed out after 2s") as exc_info:
+        run_claude("p", "m", "s", timeout_seconds=2)
+
+    error = exc_info.value
+    assert error.kind == "hard_timeout"
+    assert error.timeout_seconds == 2
+    assert error.stdout_tail == "partial stdout"
+    assert error.stderr_tail == "partial stderr"
+    mock_stop.assert_called_once_with(proc)
+
+
+@patch.object(runner, "_stop_process")
+@patch.object(runner, "_latest_transcript", return_value=(None, None))
+@patch.object(runner.time, "monotonic", side_effect=[0.0, 3.0])
+@patch.object(runner.subprocess, "Popen")
+def test_run_claude_raises_idle_timeout(
+    mock_popen, mock_monotonic, mock_latest, mock_stop
+):
+    proc = Mock()
+    proc.communicate.side_effect = subprocess.TimeoutExpired(
+        "claude",
+        runner.POLL_SECONDS,
+        output="",
+        stderr="",
+    )
+    proc.poll.return_value = None
+    mock_popen.return_value = proc
+
+    with pytest.raises(ClaudeRunError, match="idle timeout after 2s") as exc_info:
+        run_claude("p", "m", "s", timeout_seconds=100, idle_timeout_seconds=2)
+
+    error = exc_info.value
+    assert error.kind == "idle_timeout"
+    assert error.idle_timeout_seconds == 2
+    mock_stop.assert_called_once_with(proc)
+
+
+@patch.object(runner.subprocess, "Popen", side_effect=PermissionError("nope"))
+def test_run_claude_does_not_catch_unexpected_exceptions(mock_popen):
+    with pytest.raises(PermissionError, match="nope"):
         run_claude("p", "m", "s")
