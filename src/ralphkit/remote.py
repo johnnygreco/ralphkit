@@ -125,20 +125,23 @@ def submit_job(
         )
         ralph_args = ralph_args + ["--plan", plan_path]
 
-    meta_content = json.dumps(
-        build_submission_metadata(
-            job_id=job_id,
-            subcommand=subcommand,
-            ralph_args=ralph_args,
-            working_dir=working_dir,
-            isolation=isolation,
-            scratch_dir=f"{remote_home}/.local/share/ralphkit/jobs/{job_id}",
+    meta_content = (
+        json.dumps(
+            build_submission_metadata(
+                job_id=job_id,
+                subcommand=subcommand,
+                ralph_args=ralph_args,
+                working_dir=working_dir,
+                isolation=isolation,
+                scratch_dir=f"{remote_home}/.local/share/ralphkit/jobs/{job_id}",
+            )
+            | {
+                "submitted_at": datetime.now().isoformat(),
+            },
+            indent=2,
         )
-        | {
-            "submitted_at": datetime.now().isoformat(),
-        },
-        indent=2,
-    ) + "\n"
+        + "\n"
+    )
     meta_path = f"{logs_dir}/{job_id}.meta.json"
     _ssh_run(
         host,

@@ -897,7 +897,9 @@ def run_foreground(
             console.print()
         elif config.cleanup and run_failed and config.cleanup_on_error == "light":
             console.print()
-            print_warning("Skipping Claude cleanup steps due to cleanup_on_error=light.")
+            print_warning(
+                "Skipping Claude cleanup steps due to cleanup_on_error=light."
+            )
             console.print()
         elif config.cleanup and run_failed and config.cleanup_on_error == "skip":
             console.print()

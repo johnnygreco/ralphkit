@@ -104,7 +104,7 @@ def build_job_script(
         'export TMPDIR="$TMP_DIR"',
     ]
     if working_dir:
-        lines.append(f'ORIG_DIR={shlex.quote(working_dir)}')
+        lines.append(f"ORIG_DIR={shlex.quote(working_dir)}")
     else:
         lines.append('ORIG_DIR="$PWD"')
     if isolation == "worktree":

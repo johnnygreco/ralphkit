@@ -357,9 +357,7 @@ def print_report(report: RunReport) -> None:
         console.print(
             f"  Step:           {report.failure_summary.get('step_name') or '-'}"
         )
-        console.print(
-            f"  Phase:          {report.failure_summary.get('phase') or '-'}"
-        )
+        console.print(f"  Phase:          {report.failure_summary.get('phase') or '-'}")
         console.print(
             f"  Kind:           {report.failure_summary.get('error_kind') or '-'}"
         )

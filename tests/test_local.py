@@ -41,9 +41,11 @@ def test_submit_local_script_file_is_executable(mock_run, mock_which, tmp_path):
     script_file = tmp_path / f"{job_id}.sh"
     meta_file = tmp_path / f"{job_id}.meta.json"
     job_dir = tmp_path / job_id
-    with patch("ralphkit.local.script_path_local", return_value=script_file), patch(
-        "ralphkit.local.meta_path_local", return_value=meta_file
-    ), patch("ralphkit.local.job_path_local", return_value=job_dir):
+    with (
+        patch("ralphkit.local.script_path_local", return_value=script_file),
+        patch("ralphkit.local.meta_path_local", return_value=meta_file),
+        patch("ralphkit.local.job_path_local", return_value=job_dir),
+    ):
         submit_local(job_id, ["pipe.yml"], subcommand="pipe")
 
     assert script_file.exists()
@@ -66,9 +68,11 @@ def test_submit_local_uses_subcommand_in_script(mock_run, mock_which, tmp_path):
     script_file = tmp_path / f"{job_id}.sh"
     meta_file = tmp_path / f"{job_id}.meta.json"
     job_dir = tmp_path / job_id
-    with patch("ralphkit.local.script_path_local", return_value=script_file), patch(
-        "ralphkit.local.meta_path_local", return_value=meta_file
-    ), patch("ralphkit.local.job_path_local", return_value=job_dir):
+    with (
+        patch("ralphkit.local.script_path_local", return_value=script_file),
+        patch("ralphkit.local.meta_path_local", return_value=meta_file),
+        patch("ralphkit.local.job_path_local", return_value=job_dir),
+    ):
         submit_local(
             job_id,
             [

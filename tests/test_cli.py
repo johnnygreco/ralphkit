@@ -451,9 +451,7 @@ def test_remote_dispatch_includes_force(mock_run):
         if c[1].get("input") and '"subcommand": "research"' in c[1]["input"]
     ]
     script_calls = [
-        c
-        for c in calls
-        if c[1].get("input") and "ralphkit research" in c[1]["input"]
+        c for c in calls if c[1].get("input") and "ralphkit research" in c[1]["input"]
     ]
     assert len(metadata_calls) == 1
     assert "--force" in metadata_calls[0][1]["input"]
