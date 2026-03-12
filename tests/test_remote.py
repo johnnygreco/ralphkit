@@ -85,15 +85,17 @@ def test_submit_job_full_flow(mock_run):
     # SSH args are ["ssh", "-o", "ConnectTimeout=10", host, cmd] so cmd is at index 4
     # Pre-flight: tmux check
     assert "command -v tmux" in calls[0][0][0][4]
+    # Resolve remote home
+    assert "echo $HOME" in calls[1][0][0][4]
     # mkdir -p (once, before uploads)
-    assert "mkdir -p" in calls[1][0][0][4]
+    assert "mkdir -p" in calls[2][0][0][4]
     # Upload script (no mkdir -p)
-    assert "mkdir -p" not in calls[2][0][0][4]
-    assert "cat >" in calls[2][0][0][4]
+    assert "mkdir -p" not in calls[3][0][0][4]
+    assert "cat >" in calls[3][0][0][4]
     # Launch tmux
-    assert "tmux new-session" in calls[3][0][0][4]
-    assert "remain-on-exit" in calls[3][0][0][4]
-    assert len(calls) == 4
+    assert "tmux new-session" in calls[4][0][0][4]
+    assert "remain-on-exit" in calls[4][0][0][4]
+    assert len(calls) == 5
 
 
 @patch("ralphkit.remote.subprocess.run")
@@ -112,8 +114,8 @@ def test_submit_job_with_working_dir(mock_run):
     assert "command -v tmux" in calls[0][0][0][4]
     # Pre-flight: working dir check
     assert "/opt/app" in calls[1][0][0][4]
-    # mkdir -p, upload script, launch = 5 calls total
-    assert len(calls) == 5
+    # echo $HOME, mkdir -p, upload script, launch = 6 calls total
+    assert len(calls) == 6
 
 
 @patch("ralphkit.remote.subprocess.run")
@@ -129,8 +131,8 @@ def test_submit_job_with_ralph_version(mock_run):
 
     calls = mock_run.call_args_list
     # The uploaded script should contain uvx --from ralphkit==0.5.0
-    # calls[0]=tmux check, calls[1]=mkdir, calls[2]=upload script
-    upload_call = calls[2]
+    # calls[0]=tmux check, calls[1]=echo $HOME, calls[2]=mkdir, calls[3]=upload script
+    upload_call = calls[3]
     script_content = upload_call[1]["input"]
     assert "uvx --refresh --from ralphkit==0.5.0 ralphkit" in script_content
 
@@ -147,17 +149,17 @@ def test_submit_job_with_config_content(mock_run):
     )
 
     calls = mock_run.call_args_list
-    # calls: tmux check, mkdir, config upload, script upload, tmux launch
-    assert len(calls) == 5
+    # calls: tmux check, echo $HOME, mkdir, config upload, script upload, tmux launch
+    assert len(calls) == 6
     # mkdir -p (once)
-    assert "mkdir -p" in calls[1][0][0][4]
+    assert "mkdir -p" in calls[2][0][0][4]
     # Config upload (no mkdir -p)
-    config_call = calls[2]
+    config_call = calls[3]
     assert "rk-abc123.config.yaml" in config_call[0][0][4]
     assert "mkdir -p" not in config_call[0][0][4]
     assert config_call[1]["input"] == "max_iterations: 3\nloop:\n  - step_name: w\n"
     # Script should reference the config path
-    script_call = calls[3]
+    script_call = calls[4]
     script_content = script_call[1]["input"]
     assert "--config" in script_content
     assert "rk-abc123.config.yaml" in script_content
@@ -174,8 +176,8 @@ def test_submit_job_with_plan_content(mock_run):
         plan_content='{"items": [{"id": 1, "title": "test", "done": false}]}',
     )
     calls = mock_run.call_args_list
-    # calls: tmux check, mkdir, plan upload, script upload, tmux launch
-    assert len(calls) == 5
+    # calls: tmux check, echo $HOME, mkdir, plan upload, script upload, tmux launch
+    assert len(calls) == 6
     plan_uploads = [
         c for c in calls if c[1].get("input") and "items" in str(c[1]["input"])
     ]
@@ -192,8 +194,8 @@ def test_submit_job_with_subcommand(mock_run):
     )
 
     calls = mock_run.call_args_list
-    # calls[0]=tmux check, calls[1]=mkdir, calls[2]=script upload
-    upload_call = calls[2]
+    # calls[0]=tmux check, calls[1]=echo $HOME, calls[2]=mkdir, calls[3]=script upload
+    upload_call = calls[3]
     script_content = upload_call[1]["input"]
     assert "ralphkit build task.md --force" in script_content
     assert "ralphkit run" not in script_content
