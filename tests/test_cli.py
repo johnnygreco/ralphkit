@@ -405,6 +405,18 @@ def test_loop_requires_config(mock_fg):
     assert result.exit_code != 0
 
 
+def test_loop_without_task_errors(tmp_path):
+    """loop command without a task shows an error before doing any work."""
+    cfg = tmp_path / "loop.yaml"
+    cfg.write_text(
+        "loop:\n  - step_name: w\n    task_prompt: W.\n    system_prompt: S.\n"
+    )
+    result = runner.invoke(app, ["loop", "--config", str(cfg)])
+    assert result.exit_code != 0
+    plain = _strip_ansi(result.output)
+    assert "task is required" in plain
+
+
 @patch("ralphkit.engine.run_foreground")
 def test_loop_foreground(mock_fg, tmp_path):
     """loop command with --config calls run_foreground."""

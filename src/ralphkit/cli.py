@@ -624,6 +624,12 @@ def loop(
     ralph_version: RalphVersionOpt = None,
 ) -> None:
     """Run a custom loop from a YAML config file."""
+    if task is None and resume_run is None:
+        from ralphkit.ui import print_error
+
+        print_error("task is required for loop mode (or use --resume-run)")
+        raise typer.Exit(1)
+
     _dispatch(
         subcommand="loop",
         task=task,
