@@ -65,7 +65,8 @@ WorkingDirOpt = Annotated[
 RalphVersionOpt = Annotated[
     Optional[str],
     typer.Option(
-        "--ralph-version", help="ralphkit version for remote (default: latest)"
+        "--ralph-version",
+        help="Remote ralphkit version: latest, current, or an exact version",
     ),
 ]
 ForceOpt = Annotated[bool, typer.Option("-f", "--force", help="Skip confirmation")]
@@ -624,6 +625,12 @@ def loop(
     ralph_version: RalphVersionOpt = None,
 ) -> None:
     """Run a custom loop from a YAML config file."""
+    if task is None and resume_run is None:
+        from ralphkit.ui import print_error
+
+        print_error("task is required for loop mode (or use --resume-run)")
+        raise typer.Exit(1)
+
     _dispatch(
         subcommand="loop",
         task=task,
