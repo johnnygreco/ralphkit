@@ -65,8 +65,7 @@ WorkingDirOpt = Annotated[
 RalphVersionOpt = Annotated[
     Optional[str],
     typer.Option(
-        "--ralph-version",
-        help="Remote ralphkit version: latest, current, or an exact version",
+        "--ralph-version", help="ralphkit version for remote (default: latest)"
     ),
 ]
 ForceOpt = Annotated[bool, typer.Option("-f", "--force", help="Skip confirmation")]
