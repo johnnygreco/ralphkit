@@ -1,5 +1,3 @@
-from ralphkit.config import StepConfig
-
 # ── Existing prompts (moved from config.py) ──────────────────────
 
 DEFAULT_PLANNER_TASK_PROMPT = (
