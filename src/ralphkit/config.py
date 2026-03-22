@@ -9,7 +9,6 @@ DEFAULT_MAX_ITERATIONS = 10
 DEFAULT_MODEL = "opus"
 DEFAULT_TIMEOUT_SECONDS = 1800
 DEFAULT_CLEANUP_ON_ERROR = "light"
-DEFAULT_CHECKPOINT_POLICY = "auto"
 DEFAULT_ISOLATION = "shared"
 
 
@@ -63,13 +62,16 @@ class RalphConfig:
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     idle_timeout_seconds: int | None = None
     cleanup_on_error: str = DEFAULT_CLEANUP_ON_ERROR
-    checkpoint_policy: str = DEFAULT_CHECKPOINT_POLICY
     isolation: str = DEFAULT_ISOLATION
     setup: list[StepConfig] = field(default_factory=list)
     cleanup: list[StepConfig] = field(default_factory=list)
     pipe: list[StepConfig] = field(default_factory=list)
-    handoff_prompt: str | None = None  # config-level handoff override (pipe only)
     plan_model: str | None = None
+    max_cost: float | None = None
+    max_duration_seconds: int | None = None
+    completion_consensus: int = 2
+    verify_command: str | None = None
+    verify_timeout: int = 300
 
 
 def resolve_model(step: StepConfig, default: str) -> str:
@@ -132,7 +134,6 @@ def load_config(path: str | Path | None = None) -> RalphConfig:
             loop=_default_loop(),
             timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
             cleanup_on_error=DEFAULT_CLEANUP_ON_ERROR,
-            checkpoint_policy=DEFAULT_CHECKPOINT_POLICY,
             isolation=DEFAULT_ISOLATION,
             cleanup=_default_cleanup(),
         )
@@ -148,14 +149,17 @@ def load_config(path: str | Path | None = None) -> RalphConfig:
         "timeout_seconds",
         "idle_timeout_seconds",
         "cleanup_on_error",
-        "checkpoint_policy",
         "isolation",
         "loop",
         "setup",
         "cleanup",
         "pipe",
-        "handoff_prompt",
         "plan_model",
+        "max_cost",
+        "max_duration_seconds",
+        "completion_consensus",
+        "verify_command",
+        "verify_timeout",
     }
     unknown = set(data) - valid_keys
     if unknown:
@@ -186,12 +190,6 @@ def load_config(path: str | Path | None = None) -> RalphConfig:
         {"full", "light", "skip"},
         DEFAULT_CLEANUP_ON_ERROR,
     )
-    checkpoint_policy = _parse_choice(
-        data.get("checkpoint_policy"),
-        "checkpoint_policy",
-        {"auto", "off"},
-        DEFAULT_CHECKPOINT_POLICY,
-    )
     isolation = _parse_choice(
         data.get("isolation"),
         "isolation",
@@ -199,6 +197,31 @@ def load_config(path: str | Path | None = None) -> RalphConfig:
         DEFAULT_ISOLATION,
     )
     plan_model = data.get("plan_model")
+
+    max_cost = None
+    if "max_cost" in data:
+        try:
+            max_cost = float(data["max_cost"])
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"max_cost must be a number: {e}") from e
+        if max_cost <= 0:
+            raise ValueError(f"max_cost must be > 0, got {max_cost}")
+
+    max_duration_seconds = _parse_positive_int(
+        data.get("max_duration_seconds"), "max_duration_seconds"
+    )
+
+    completion_consensus = 2
+    if "completion_consensus" in data:
+        completion_consensus = (
+            _parse_positive_int(data["completion_consensus"], "completion_consensus")
+            or 2
+        )
+
+    verify_command = data.get("verify_command")
+    verify_timeout = (
+        _parse_positive_int(data.get("verify_timeout", 300), "verify_timeout") or 300
+    )
 
     # ── Pipe vs loop mutual exclusivity ──────────────────────────
     has_pipe = "pipe" in data
@@ -231,8 +254,6 @@ def load_config(path: str | Path | None = None) -> RalphConfig:
         if "cleanup" not in data:
             cleanup_steps = _default_cleanup()
 
-    handoff_prompt = data.get("handoff_prompt")
-
     return RalphConfig(
         max_iterations=max_iterations,
         default_model=default_model,
@@ -241,11 +262,14 @@ def load_config(path: str | Path | None = None) -> RalphConfig:
         timeout_seconds=timeout_seconds or DEFAULT_TIMEOUT_SECONDS,
         idle_timeout_seconds=idle_timeout_seconds,
         cleanup_on_error=cleanup_on_error,
-        checkpoint_policy=checkpoint_policy,
         isolation=isolation,
         setup=setup_steps,
         cleanup=cleanup_steps,
         pipe=pipe_steps,
-        handoff_prompt=handoff_prompt,
         plan_model=plan_model,
+        max_cost=max_cost,
+        max_duration_seconds=max_duration_seconds,
+        completion_consensus=completion_consensus,
+        verify_command=verify_command,
+        verify_timeout=verify_timeout,
     )
