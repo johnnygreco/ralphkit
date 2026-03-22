@@ -874,7 +874,9 @@ def run_foreground(
                         # Clean up any previous failure
                         (state.path / "verify_failure.txt").unlink(missing_ok=True)
                     else:
-                        output = (verify_proc.stdout + "\n" + verify_proc.stderr).strip()
+                        output = (
+                            verify_proc.stdout + "\n" + verify_proc.stderr
+                        ).strip()
                         state.write_verify_failure(output)
                         console.print(
                             f"  [yellow]Verification failed (exit {verify_proc.returncode})[/]"

@@ -455,7 +455,15 @@ class TestTaskResolution:
         task_file = tmp_path / "bug.md"
         task_file.write_text("# Bug Report\nThe widget is broken.")
         r = _rk(
-            ["pipe", str(task_file), "-c", str(cfg), "-f", "--state-dir", str(state_dir)],
+            [
+                "pipe",
+                str(task_file),
+                "-c",
+                str(cfg),
+                "-f",
+                "--state-dir",
+                str(state_dir),
+            ],
             env,
         )
         assert r.returncode == 0
@@ -470,7 +478,15 @@ class TestTaskResolution:
         state_dir = tmp_path / "state"
         cfg = _write_pipe_config(tmp_path)
         r = _rk(
-            ["pipe", "nonexistent.md", "-c", str(cfg), "-f", "--state-dir", str(state_dir)],
+            [
+                "pipe",
+                "nonexistent.md",
+                "-c",
+                str(cfg),
+                "-f",
+                "--state-dir",
+                str(state_dir),
+            ],
             env,
         )
         assert r.returncode == 0
@@ -490,7 +506,9 @@ class TestStateManagement:
         state_dir = tmp_path / "state"
         cfg = _write_pipe_config(tmp_path)
         _rk(["pipe", "first", "-c", str(cfg), "-f", "--state-dir", str(state_dir)], env)
-        _rk(["pipe", "second", "-c", str(cfg), "-f", "--state-dir", str(state_dir)], env)
+        _rk(
+            ["pipe", "second", "-c", str(cfg), "-f", "--state-dir", str(state_dir)], env
+        )
 
         runs = sorted((state_dir / "runs").iterdir())
         assert len(runs) == 2
@@ -537,7 +555,18 @@ class TestRunsCommand:
         """After running a pipe, ``runs`` lists it with task preview."""
         state_dir = tmp_path / "state"
         cfg = _write_pipe_config(tmp_path)
-        _rk(["pipe", "find the bug", "-c", str(cfg), "-f", "--state-dir", str(state_dir)], env)
+        _rk(
+            [
+                "pipe",
+                "find the bug",
+                "-c",
+                str(cfg),
+                "-f",
+                "--state-dir",
+                str(state_dir),
+            ],
+            env,
+        )
         r = _rk(["runs", "--state-dir", str(state_dir)], env)
         assert r.returncode == 0
         assert "001" in r.stdout

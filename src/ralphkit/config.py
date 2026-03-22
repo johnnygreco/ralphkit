@@ -213,14 +213,15 @@ def load_config(path: str | Path | None = None) -> RalphConfig:
 
     completion_consensus = 2
     if "completion_consensus" in data:
-        completion_consensus = _parse_positive_int(
-            data["completion_consensus"], "completion_consensus"
-        ) or 2
+        completion_consensus = (
+            _parse_positive_int(data["completion_consensus"], "completion_consensus")
+            or 2
+        )
 
     verify_command = data.get("verify_command")
-    verify_timeout = _parse_positive_int(
-        data.get("verify_timeout", 300), "verify_timeout"
-    ) or 300
+    verify_timeout = (
+        _parse_positive_int(data.get("verify_timeout", 300), "verify_timeout") or 300
+    )
 
     # ── Pipe vs loop mutual exclusivity ──────────────────────────
     has_pipe = "pipe" in data

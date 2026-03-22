@@ -294,11 +294,15 @@ CompletionConsensusOpt = Annotated[
 ]
 VerifyOpt = Annotated[
     Optional[str],
-    typer.Option("--verify", help="Command to run after each iteration (e.g. 'pytest tests/')"),
+    typer.Option(
+        "--verify", help="Command to run after each iteration (e.g. 'pytest tests/')"
+    ),
 ]
 VerifyTimeoutOpt = Annotated[
     Optional[int],
-    typer.Option("--verify-timeout", help="Timeout for verify command in seconds (default: 300)"),
+    typer.Option(
+        "--verify-timeout", help="Timeout for verify command in seconds (default: 300)"
+    ),
 ]
 
 
