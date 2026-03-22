@@ -131,8 +131,17 @@ class StateDir:
     def is_blocked(self) -> str | None:
         return self._read("RALPH-BLOCKED.md")
 
+    def is_complete(self) -> str | None:
+        return self._read("RALPH-COMPLETE.md")
+
+    def write_verify_failure(self, output: str) -> None:
+        (self.path / "verify_failure.txt").write_text(output)
+
+    def read_verify_failure(self) -> str | None:
+        return self._read("verify_failure.txt")
+
     def clean_for_next_iteration(self) -> None:
-        for name in ["RALPH-BLOCKED.md"]:
+        for name in ["RALPH-BLOCKED.md", "RALPH-COMPLETE.md"]:
             (self.path / name).unlink(missing_ok=True)
 
     # ── Plan management ───────────────────────────────────────────

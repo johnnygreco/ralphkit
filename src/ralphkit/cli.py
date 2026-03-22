@@ -6,9 +6,7 @@ import typer
 from ralphkit.ui import console
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from ralphkit.config import RalphConfig, StepConfig
+    from ralphkit.config import RalphConfig
 
 
 app = typer.Typer(
@@ -137,6 +135,11 @@ def _dispatch(
     plan_path: str | None = None,
     plan_only: bool = False,
     plan_model: str | None = None,
+    max_cost: float | None = None,
+    max_duration_seconds: int | None = None,
+    completion_consensus: int | None = None,
+    verify_command: str | None = None,
+    verify_timeout: int | None = None,
     resume_run: str | None = None,
     working_dir: str | None = None,
     ralph_version: str | None = None,
@@ -172,6 +175,11 @@ def _dispatch(
             plan_path=plan_path,
             plan_only=plan_only,
             plan_model=plan_model,
+            max_cost=max_cost,
+            max_duration_seconds=max_duration_seconds,
+            completion_consensus=completion_consensus,
+            verify_command=verify_command,
+            verify_timeout=verify_timeout,
             resume_run=resume_run,
             ralph_config=ralph_config,
         )
@@ -212,6 +220,16 @@ def _dispatch(
         args += ["--plan", plan_path]
     if plan_only:
         args.append("--plan-only")
+    if max_cost is not None:
+        args += ["--max-cost", str(max_cost)]
+    if max_duration_seconds is not None:
+        args += ["--max-duration", str(max_duration_seconds)]
+    if completion_consensus is not None:
+        args += ["--completion-consensus", str(completion_consensus)]
+    if verify_command:
+        args += ["--verify", verify_command]
+    if verify_timeout is not None:
+        args += ["--verify-timeout", str(verify_timeout)]
     if resume_run:
         args += ["--resume-run", resume_run]
     args.append("--force")
@@ -259,55 +277,29 @@ def _dispatch(
 # -- Workflow commands --
 
 
-def _pipe_workflow(
-    subcommand: str,
-    task: str,
-    steps_factory: "Callable[[], list[StepConfig]]",
-    *,
-    default_model: str | None,
-    state_dir: str | None,
-    host: str | None,
-    force: bool,
-    timeout_seconds: int | None,
-    idle_timeout_seconds: int | None,
-    cleanup_on_error: str | None,
-    isolation: str | None,
-    resume_run: str | None,
-    working_dir: str | None,
-    ralph_version: str | None,
-) -> None:
-    """Shared implementation for pipe-based workflow commands."""
-    from ralphkit.config import (
-        DEFAULT_MAX_ITERATIONS,
-        DEFAULT_MODEL,
-        STATE_DIR,
-        RalphConfig,
-    )
-
-    ralph_config = RalphConfig(
-        max_iterations=DEFAULT_MAX_ITERATIONS,
-        default_model=DEFAULT_MODEL,
-        state_dir=STATE_DIR,
-        loop=[],
-        pipe=steps_factory(),
-    )
-
-    _dispatch(
-        subcommand=subcommand,
-        task=task,
-        host=host,
-        force=force,
-        ralph_config=ralph_config,
-        default_model=default_model,
-        state_dir=state_dir,
-        timeout_seconds=timeout_seconds,
-        idle_timeout_seconds=idle_timeout_seconds,
-        cleanup_on_error=cleanup_on_error,
-        isolation=isolation,
-        resume_run=resume_run,
-        working_dir=working_dir,
-        ralph_version=ralph_version,
-    )
+MaxCostOpt = Annotated[
+    Optional[float],
+    typer.Option("--max-cost", help="Stop when estimated cost exceeds this (USD)"),
+]
+MaxDurationOpt = Annotated[
+    Optional[int],
+    typer.Option("--max-duration", help="Stop after this many seconds of wall time"),
+]
+CompletionConsensusOpt = Annotated[
+    Optional[int],
+    typer.Option(
+        "--completion-consensus",
+        help="Consecutive completion signals needed to stop (default: 2)",
+    ),
+]
+VerifyOpt = Annotated[
+    Optional[str],
+    typer.Option("--verify", help="Command to run after each iteration (e.g. 'pytest tests/')"),
+]
+VerifyTimeoutOpt = Annotated[
+    Optional[int],
+    typer.Option("--verify-timeout", help="Timeout for verify command in seconds (default: 300)"),
+]
 
 
 @app.command()
@@ -336,11 +328,16 @@ def build(
         bool,
         typer.Option("--plan-only", help="Generate plan and exit"),
     ] = False,
+    max_cost: MaxCostOpt = None,
+    max_duration: MaxDurationOpt = None,
+    completion_consensus: CompletionConsensusOpt = None,
+    verify: VerifyOpt = None,
+    verify_timeout: VerifyTimeoutOpt = None,
     resume_run: ResumeRunOpt = None,
     working_dir: WorkingDirOpt = None,
     ralph_version: RalphVersionOpt = None,
 ) -> None:
-    """Build a feature using a plan-driven loop (plan \u2192 build \u2192 review)."""
+    """Build a feature using a plan-driven loop (plan -> build -> review)."""
     from ralphkit.config import (
         DEFAULT_MAX_ITERATIONS,
         DEFAULT_MODEL,
@@ -374,158 +371,11 @@ def build(
         plan_path=str(plan) if plan else None,
         plan_only=plan_only,
         plan_model=plan_model,
-        resume_run=resume_run,
-        working_dir=working_dir,
-        ralph_version=ralph_version,
-    )
-
-
-@app.command()
-def fix(
-    task: Annotated[
-        str, typer.Argument(help="Bug description (string or path to .md file)")
-    ],
-    default_model: ModelOpt = None,
-    state_dir: StateDirOpt = None,
-    host: HostOpt = None,
-    force: ForceOpt = False,
-    timeout_seconds: TimeoutOpt = None,
-    idle_timeout_seconds: IdleTimeoutOpt = None,
-    cleanup_on_error: CleanupOnErrorOpt = None,
-    isolation: IsolationOpt = None,
-    resume_run: ResumeRunOpt = None,
-    working_dir: WorkingDirOpt = None,
-    ralph_version: RalphVersionOpt = None,
-) -> None:
-    """Fix a bug using a diagnostic pipeline (diagnose \u2192 fix \u2192 verify)."""
-    from ralphkit.prompts import make_fix_config
-
-    _pipe_workflow(
-        "fix",
-        task,
-        make_fix_config,
-        default_model=default_model,
-        state_dir=state_dir,
-        host=host,
-        force=force,
-        timeout_seconds=timeout_seconds,
-        idle_timeout_seconds=idle_timeout_seconds,
-        cleanup_on_error=cleanup_on_error,
-        isolation=isolation,
-        resume_run=resume_run,
-        working_dir=working_dir,
-        ralph_version=ralph_version,
-    )
-
-
-@app.command()
-def research(
-    task: Annotated[
-        str, typer.Argument(help="Research topic (string or path to .md file)")
-    ],
-    default_model: ModelOpt = None,
-    state_dir: StateDirOpt = None,
-    host: HostOpt = None,
-    force: ForceOpt = False,
-    timeout_seconds: TimeoutOpt = None,
-    idle_timeout_seconds: IdleTimeoutOpt = None,
-    cleanup_on_error: CleanupOnErrorOpt = None,
-    isolation: IsolationOpt = None,
-    resume_run: ResumeRunOpt = None,
-    working_dir: WorkingDirOpt = None,
-    ralph_version: RalphVersionOpt = None,
-) -> None:
-    """Research a topic using a pipeline (explore \u2192 synthesize \u2192 report)."""
-    from ralphkit.prompts import make_research_config
-
-    _pipe_workflow(
-        "research",
-        task,
-        make_research_config,
-        default_model=default_model,
-        state_dir=state_dir,
-        host=host,
-        force=force,
-        timeout_seconds=timeout_seconds,
-        idle_timeout_seconds=idle_timeout_seconds,
-        cleanup_on_error=cleanup_on_error,
-        isolation=isolation,
-        resume_run=resume_run,
-        working_dir=working_dir,
-        ralph_version=ralph_version,
-    )
-
-
-@app.command()
-def plan(
-    task: Annotated[
-        str, typer.Argument(help="Task to plan (string or path to .md file)")
-    ],
-    default_model: ModelOpt = None,
-    state_dir: StateDirOpt = None,
-    host: HostOpt = None,
-    force: ForceOpt = False,
-    timeout_seconds: TimeoutOpt = None,
-    idle_timeout_seconds: IdleTimeoutOpt = None,
-    cleanup_on_error: CleanupOnErrorOpt = None,
-    isolation: IsolationOpt = None,
-    resume_run: ResumeRunOpt = None,
-    working_dir: WorkingDirOpt = None,
-    ralph_version: RalphVersionOpt = None,
-) -> None:
-    """Plan an implementation (analyze \u2192 design document)."""
-    from ralphkit.prompts import make_plan_config
-
-    _pipe_workflow(
-        "plan",
-        task,
-        make_plan_config,
-        default_model=default_model,
-        state_dir=state_dir,
-        host=host,
-        force=force,
-        timeout_seconds=timeout_seconds,
-        idle_timeout_seconds=idle_timeout_seconds,
-        cleanup_on_error=cleanup_on_error,
-        isolation=isolation,
-        resume_run=resume_run,
-        working_dir=working_dir,
-        ralph_version=ralph_version,
-    )
-
-
-@app.command()
-def big_swing(
-    task: Annotated[
-        str, typer.Argument(help="Task description (string or path to .md file)")
-    ],
-    default_model: ModelOpt = None,
-    state_dir: StateDirOpt = None,
-    host: HostOpt = None,
-    force: ForceOpt = False,
-    timeout_seconds: TimeoutOpt = None,
-    idle_timeout_seconds: IdleTimeoutOpt = None,
-    cleanup_on_error: CleanupOnErrorOpt = None,
-    isolation: IsolationOpt = None,
-    resume_run: ResumeRunOpt = None,
-    working_dir: WorkingDirOpt = None,
-    ralph_version: RalphVersionOpt = None,
-) -> None:
-    """Tackle an ambitious task (research \u2192 plan \u2192 build \u2192 review \u2192 fix \u2192 verify)."""
-    from ralphkit.prompts import make_big_swing_config
-
-    _pipe_workflow(
-        "big-swing",
-        task,
-        make_big_swing_config,
-        default_model=default_model,
-        state_dir=state_dir,
-        host=host,
-        force=force,
-        timeout_seconds=timeout_seconds,
-        idle_timeout_seconds=idle_timeout_seconds,
-        cleanup_on_error=cleanup_on_error,
-        isolation=isolation,
+        max_cost=max_cost,
+        max_duration_seconds=max_duration,
+        completion_consensus=completion_consensus,
+        verify_command=verify,
+        verify_timeout=verify_timeout,
         resume_run=resume_run,
         working_dir=working_dir,
         ralph_version=ralph_version,
@@ -619,6 +469,11 @@ def loop(
         bool,
         typer.Option("--plan-only", help="Generate plan and exit"),
     ] = False,
+    max_cost: MaxCostOpt = None,
+    max_duration: MaxDurationOpt = None,
+    completion_consensus: CompletionConsensusOpt = None,
+    verify: VerifyOpt = None,
+    verify_timeout: VerifyTimeoutOpt = None,
     resume_run: ResumeRunOpt = None,
     working_dir: WorkingDirOpt = None,
     ralph_version: RalphVersionOpt = None,
@@ -646,6 +501,11 @@ def loop(
         plan_path=str(plan) if plan else None,
         plan_only=plan_only,
         plan_model=plan_model,
+        max_cost=max_cost,
+        max_duration_seconds=max_duration,
+        completion_consensus=completion_consensus,
+        verify_command=verify,
+        verify_timeout=verify_timeout,
         resume_run=resume_run,
         working_dir=working_dir,
         ralph_version=ralph_version,

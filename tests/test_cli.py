@@ -23,10 +23,6 @@ def test_help_shows_commands():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "build" in result.output
-    assert "fix" in result.output
-    assert "research" in result.output
-    assert "plan" in result.output
-    assert "big-swing" in result.output
     assert "pipe" in result.output
     assert "loop" in result.output
     assert "runs" in result.output
@@ -122,103 +118,6 @@ def test_build_passes_options(mock_fg):
     assert kwargs["force"] is True
 
 
-# -- fix command --
-
-
-@patch("ralphkit.engine.run_foreground")
-def test_fix_foreground(mock_fg):
-    """fix command creates pipe config with 3 steps."""
-    mock_fg.side_effect = SystemExit(0)
-    runner.invoke(app, ["fix", "Bug report", "-f"])
-    mock_fg.assert_called_once()
-    kwargs = mock_fg.call_args.kwargs
-    assert kwargs["task"] == "Bug report"
-    assert len(kwargs["ralph_config"].pipe) == 3
-
-
-# -- research command --
-
-
-@patch("ralphkit.engine.run_foreground")
-def test_research_foreground(mock_fg):
-    """research command creates pipe config with 3 steps."""
-    mock_fg.side_effect = SystemExit(0)
-    runner.invoke(app, ["research", "Topic", "-f"])
-    mock_fg.assert_called_once()
-    assert len(mock_fg.call_args.kwargs["ralph_config"].pipe) == 3
-
-
-# -- plan command --
-
-
-@patch("ralphkit.engine.run_foreground")
-def test_plan_foreground(mock_fg):
-    """plan command creates pipe config with 2 steps."""
-    mock_fg.side_effect = SystemExit(0)
-    runner.invoke(app, ["plan", "Design task", "-f"])
-    mock_fg.assert_called_once()
-    assert len(mock_fg.call_args.kwargs["ralph_config"].pipe) == 2
-
-
-# -- big-swing command --
-
-
-@patch("ralphkit.engine.run_foreground")
-def test_big_swing_foreground(mock_fg):
-    """big-swing command creates pipe config with 6 steps."""
-    mock_fg.side_effect = SystemExit(0)
-    runner.invoke(app, ["big-swing", "Epic task", "-f"])
-    mock_fg.assert_called_once()
-    assert len(mock_fg.call_args.kwargs["ralph_config"].pipe) == 6
-
-
-# -- pipe step names --
-
-
-@patch("ralphkit.engine.run_foreground")
-def test_fix_foreground_step_names(mock_fg):
-    """fix command wires correct factory with correct step names."""
-    mock_fg.side_effect = SystemExit(0)
-    runner.invoke(app, ["fix", "Bug report", "-f"])
-    mock_fg.assert_called_once()
-    pipe = mock_fg.call_args.kwargs["ralph_config"].pipe
-    assert [s.step_name for s in pipe] == ["diagnose", "fix", "verify"]
-
-
-@patch("ralphkit.engine.run_foreground")
-def test_research_foreground_step_names(mock_fg):
-    """research command wires correct step names."""
-    mock_fg.side_effect = SystemExit(0)
-    runner.invoke(app, ["research", "Topic", "-f"])
-    pipe = mock_fg.call_args.kwargs["ralph_config"].pipe
-    assert [s.step_name for s in pipe] == ["explore", "synthesize", "report"]
-
-
-@patch("ralphkit.engine.run_foreground")
-def test_plan_foreground_step_names(mock_fg):
-    """plan command wires correct step names."""
-    mock_fg.side_effect = SystemExit(0)
-    runner.invoke(app, ["plan", "Design task", "-f"])
-    pipe = mock_fg.call_args.kwargs["ralph_config"].pipe
-    assert [s.step_name for s in pipe] == ["analyze", "design"]
-
-
-@patch("ralphkit.engine.run_foreground")
-def test_big_swing_foreground_step_names(mock_fg):
-    """big-swing command wires correct step names."""
-    mock_fg.side_effect = SystemExit(0)
-    runner.invoke(app, ["big-swing", "Epic task", "-f"])
-    pipe = mock_fg.call_args.kwargs["ralph_config"].pipe
-    assert [s.step_name for s in pipe] == [
-        "research",
-        "plan",
-        "build",
-        "review",
-        "fix",
-        "verify",
-    ]
-
-
 # -- background dispatch --
 
 
@@ -278,18 +177,6 @@ def test_build_host_local_forwards_options(mock_run, mock_which, tmp_path):
     assert "--force" in script
     assert 'WORKTREE_DIR="$JOB_DIR/worktree"' in script
     assert 'export RALPHKIT_WORKING_DIR="$WORKTREE_DIR"' in script
-
-
-@patch("ralphkit.remote.subprocess.run")
-def test_fix_host_remote(mock_run):
-    """fix --host <name> submits via SSH."""
-    mock_run.return_value = __import__("subprocess").CompletedProcess(
-        args=[], returncode=0, stdout="", stderr=""
-    )
-    result = runner.invoke(app, ["fix", "bug report", "--host", "dev.example.com"])
-    assert result.exit_code == 0
-    assert "Submitted" in result.output
-    assert "dev.example.com" in result.output
 
 
 # -- runs command --
@@ -454,16 +341,16 @@ def test_remote_dispatch_includes_force(mock_run):
     mock_run.return_value = __import__("subprocess").CompletedProcess(
         args=[], returncode=0, stdout="", stderr=""
     )
-    result = runner.invoke(app, ["research", "topic", "--host", "dev.example.com"])
+    result = runner.invoke(app, ["build", "task", "--host", "dev.example.com"])
     assert result.exit_code == 0
     calls = mock_run.call_args_list
     metadata_calls = [
         c
         for c in calls
-        if c[1].get("input") and '"subcommand": "research"' in c[1]["input"]
+        if c[1].get("input") and '"subcommand": "build"' in c[1]["input"]
     ]
     script_calls = [
-        c for c in calls if c[1].get("input") and "ralphkit research" in c[1]["input"]
+        c for c in calls if c[1].get("input") and "ralphkit build" in c[1]["input"]
     ]
     assert len(metadata_calls) == 1
     assert "--force" in metadata_calls[0][1]["input"]
@@ -525,20 +412,6 @@ def test_build_host_remote_uploads_plan(mock_run, tmp_path):
     assert len(plan_uploads) >= 1
 
 
-@patch("ralphkit.local.shutil.which", return_value="/usr/bin/tmux")
-@patch("ralphkit.local.subprocess.run")
-def test_fix_host_local_uses_fix_subcommand(mock_run, mock_which, tmp_path):
-    """fix --host local dispatches with subcommand='fix'."""
-    mock_run.return_value = __import__("subprocess").CompletedProcess(
-        args=[], returncode=0
-    )
-    with patch("ralphkit.local.script_path_local", return_value=tmp_path / "job.sh"):
-        result = runner.invoke(app, ["fix", "bug", "--host", "local"])
-    assert result.exit_code == 0
-    script = (tmp_path / "job.sh").read_text()
-    assert "ralphkit fix" in script
-
-
 # -- validation: --working-dir / --ralph-version require --host --
 
 
@@ -551,6 +424,6 @@ def test_working_dir_without_host_errors():
 
 def test_ralph_version_without_host_errors():
     """--ralph-version without --host should error."""
-    result = runner.invoke(app, ["fix", "bug", "--ralph-version", "0.5.0", "-f"])
+    result = runner.invoke(app, ["build", "task", "--ralph-version", "0.5.0", "-f"])
     assert result.exit_code != 0
     assert "--host" in _strip_ansi(result.output)

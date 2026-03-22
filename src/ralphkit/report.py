@@ -12,6 +12,15 @@ from rich.table import Table
 
 from ralphkit.ui import console, fmt_duration, print_banner
 
+# Approximate cost per million tokens (USD). Used for --max-cost estimates.
+COST_PER_MILLION_TOKENS: dict[str, dict[str, float]] = {
+    "opus": {"input": 15.0, "output": 75.0, "cache_read": 1.5, "cache_write": 18.75},
+    "sonnet": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75},
+    "haiku": {"input": 0.80, "output": 4.0, "cache_read": 0.08, "cache_write": 1.0},
+}
+# Fallback: use opus pricing (conservative) for unknown models
+_FALLBACK_COST = COST_PER_MILLION_TOKENS["opus"]
+
 
 @dataclass
 class StepRecord:
@@ -122,6 +131,28 @@ class RunReport:
                         )
         return result
 
+    def estimated_cost_usd(self) -> float:
+        """Estimate total cost in USD based on token usage and model pricing."""
+        total = 0.0
+        for model_id, tokens in self.token_usage_by_model().items():
+            # Match model to pricing tier
+            cost = _FALLBACK_COST
+            for tier in COST_PER_MILLION_TOKENS:
+                if tier in model_id.lower():
+                    cost = COST_PER_MILLION_TOKENS[tier]
+                    break
+            inp = tokens.get("inputTokens", 0)
+            out = tokens.get("outputTokens", 0)
+            cr = tokens.get("cacheReadInputTokens", 0)
+            cw = tokens.get("cacheCreationInputTokens", 0)
+            total += (
+                inp * cost["input"]
+                + out * cost["output"]
+                + cr * cost["cache_read"]
+                + cw * cost["cache_write"]
+            ) / 1_000_000
+        return total
+
     def to_dict(self) -> dict:
         steps = []
         for s in self.steps:
@@ -152,6 +183,7 @@ class RunReport:
             "outcome": self.outcome,
             "iterations_completed": self.iterations_completed,
             "total_duration_s": self.total_duration_s,
+            "estimated_cost_usd": round(self.estimated_cost_usd(), 4),
             "total_turns": self.total_turns(),
             "token_usage_by_model": self.token_usage_by_model(),
             "steps": steps,
@@ -262,6 +294,11 @@ def print_report(report: RunReport) -> None:
         console.print(
             f"  Plan:        {report.items_completed}/{report.items_total} items"
         )
+
+    # Cost
+    cost = report.estimated_cost_usd()
+    if cost > 0:
+        console.print(f"  Cost (est):  ${cost:.2f}")
 
     # Total time
     total_api_ms = sum(
