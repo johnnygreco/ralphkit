@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 import time
 from dataclasses import replace
@@ -122,17 +123,14 @@ def _build_default_handoff(
 
 def _resolve_handoff(
     step: StepConfig,
-    config_handoff: str | None,
     step_index: int,
     total_steps: int,
     steps: list[StepConfig],
     state_dir: str,
 ) -> str:
-    """Resolve handoff prompt using 3-tier override: step -> config -> built-in default."""
+    """Resolve handoff prompt: step override or built-in default."""
     if step.handoff_prompt is not None:
         return step.handoff_prompt
-    if config_handoff is not None:
-        return config_handoff
     return _build_default_handoff(step_index, total_steps, steps, state_dir)
 
 
@@ -182,6 +180,11 @@ def run_foreground(
     plan_model: str | None = None,
     resume_run: str | None = None,
     ralph_config: RalphConfig | None = None,
+    max_cost: float | None = None,
+    max_duration_seconds: int | None = None,
+    completion_consensus: int | None = None,
+    verify_command: str | None = None,
+    verify_timeout: int | None = None,
 ) -> None:
     """Run a ralphkit task in the foreground (pipe or loop mode)."""
     if ralph_config is not None:
@@ -234,6 +237,21 @@ def run_foreground(
 
     if plan_model is not None:
         config = replace(config, plan_model=plan_model)
+
+    if max_cost is not None:
+        config = replace(config, max_cost=max_cost)
+
+    if max_duration_seconds is not None:
+        config = replace(config, max_duration_seconds=max_duration_seconds)
+
+    if completion_consensus is not None:
+        config = replace(config, completion_consensus=completion_consensus)
+
+    if verify_command is not None:
+        config = replace(config, verify_command=verify_command)
+
+    if verify_timeout is not None:
+        config = replace(config, verify_timeout=verify_timeout)
 
     state = StateDir(config.state_dir)
     state.setup(resume_run=resume_run)
@@ -290,11 +308,18 @@ def run_foreground(
     else:
         print_kv("Max iter", str(config.max_iterations))
         print_kv("Timeout", f"{config.timeout_seconds}s")
+        if config.max_cost is not None:
+            print_kv("Max cost", f"${config.max_cost:.2f}")
+        if config.max_duration_seconds is not None:
+            print_kv("Max time", fmt_duration(config.max_duration_seconds))
+        print_kv("Consensus", str(config.completion_consensus))
         if config.setup:
             print_kv("Setup", _step_names(config.setup))
         print_kv("Loop", _step_names(config.loop))
         if config.cleanup:
             print_kv("Cleanup", _step_names(config.cleanup))
+        if config.verify_command:
+            print_kv("Verify", config.verify_command)
     console.print()
 
     # -- Confirmation --
@@ -536,10 +561,8 @@ def run_foreground(
         suffixes = []
         if system_suffix:
             suffixes.append(system_suffix)
-        if config.checkpoint_policy == "auto":
-            suffixes.append(_checkpoint_suffix(str(state.active_path), step.step_name))
-        if suffixes:
-            system = system + "\n\n" + "\n\n".join(suffixes)
+        suffixes.append(_checkpoint_suffix(str(state.active_path), step.step_name))
+        system = system + "\n\n" + "\n\n".join(suffixes)
         model = variables["model"]
         timeout_s, idle_s = _step_timeout_settings(step)
         result = _run_phase(
@@ -615,7 +638,6 @@ def run_foreground(
                 # Resolve and render handoff prompt
                 raw_handoff = _resolve_handoff(
                     step,
-                    config.handoff_prompt,
                     idx,
                     total_steps,
                     config.pipe,
@@ -781,6 +803,7 @@ def run_foreground(
 
     # -- LOOP phase (with cleanup in finally) --
     total_loop_steps = len(config.loop)
+    completion_signal_count = 0
 
     try:
         for i in range(1, config.max_iterations + 1):
@@ -803,6 +826,16 @@ def run_foreground(
 
             loop_vars = {"iteration": str(i)}
 
+            # Check for verify failure from previous iteration
+            verify_suffix = ""
+            verify_failure = state.read_verify_failure()
+            if verify_failure:
+                verify_suffix = (
+                    "VERIFICATION FAILURE from previous iteration:\n"
+                    f"The verification command failed. Read {state.active_path}/verify_failure.txt "
+                    "and fix the issues before proceeding with your assigned item."
+                )
+
             for idx, step in enumerate(config.loop, 1):
                 step_model = resolve_model(step, config.default_model)
                 print_step_start(idx, total_loop_steps, step.step_name, step_model)
@@ -815,6 +848,7 @@ def run_foreground(
                     t0=t0,
                     iteration=i,
                     extra_vars=loop_vars,
+                    system_suffix=verify_suffix,
                 )
                 _record_step(
                     step, model, claude_out, t0, "loop", before_diff, iteration=i
@@ -822,6 +856,36 @@ def run_foreground(
                 print_step_done(fmt_duration(time.time() - t0))
 
                 _check_blocked()
+
+            # -- Run verify command if configured --
+            if config.verify_command:
+                console.print(f"  [dim]Running verify: {config.verify_command}[/]")
+                try:
+                    verify_proc = subprocess.run(
+                        config.verify_command,
+                        shell=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=config.verify_timeout,
+                        cwd=str(Path.cwd()),
+                    )
+                    if verify_proc.returncode == 0:
+                        console.print("  [green]Verification passed[/]")
+                        # Clean up any previous failure
+                        (state.path / "verify_failure.txt").unlink(missing_ok=True)
+                    else:
+                        output = (
+                            verify_proc.stdout + "\n" + verify_proc.stderr
+                        ).strip()
+                        state.write_verify_failure(output)
+                        console.print(
+                            f"  [yellow]Verification failed (exit {verify_proc.returncode})[/]"
+                        )
+                except subprocess.TimeoutExpired:
+                    state.write_verify_failure(
+                        f"Verification command timed out after {config.verify_timeout}s"
+                    )
+                    console.print("  [yellow]Verification timed out[/]")
 
             # Re-read plan after worker runs (1 file read)
             plan = state.read_plan()
@@ -842,12 +906,37 @@ def run_foreground(
             report.items_completed = done_count
             report.items_total = total_count
 
+            # Show iteration summary
+            elapsed = time.time() - iter_start
+            cost_str = ""
+            cost = report.estimated_cost_usd()
+            if cost > 0:
+                cost_str = f"  [dim]Cost: ${cost:.2f}[/]"
             console.print()
             print_plan_progress(done_count, total_count)
             console.print(
-                f"  [dim]Iteration {i} completed in {fmt_duration(time.time() - iter_start)}[/]"
+                f"  [dim]Iteration {i} completed in {fmt_duration(elapsed)}[/]{cost_str}"
             )
 
+            # -- Check completion signal (RALPH-COMPLETE.md) --
+            complete_msg = state.is_complete()
+            if complete_msg:
+                completion_signal_count += 1
+                console.print(
+                    f"  [dim]Completion signal {completion_signal_count}/{config.completion_consensus}[/]"
+                )
+                if completion_signal_count >= config.completion_consensus:
+                    console.print()
+                    print_outcome(
+                        f"COMPLETE (signaled) \u2014 {done_count}/{total_count} items, "
+                        f"{i} iteration(s)",
+                        success=True,
+                    )
+                    _exit(0, outcome="COMPLETE_SIGNALED")
+            else:
+                completion_signal_count = 0
+
+            # -- Check all plan items done --
             if all_done:
                 report.outcome = "COMPLETE"
                 console.print()
@@ -856,6 +945,29 @@ def run_foreground(
                     success=True,
                 )
                 _exit(0, outcome="COMPLETE")
+
+            # -- Check max cost --
+            if config.max_cost is not None and cost >= config.max_cost:
+                console.print()
+                print_outcome(
+                    f"Max cost (${config.max_cost:.2f}) reached. "
+                    f"{done_count}/{total_count} items completed. "
+                    f"Spent ~${cost:.2f}.",
+                    success=False,
+                )
+                _exit(1, outcome="MAX_COST")
+
+            # -- Check max duration --
+            if config.max_duration_seconds is not None:
+                wall_time = time.time() - start_time
+                if wall_time >= config.max_duration_seconds:
+                    console.print()
+                    print_outcome(
+                        f"Max duration ({fmt_duration(config.max_duration_seconds)}) reached. "
+                        f"{done_count}/{total_count} items completed.",
+                        success=False,
+                    )
+                    _exit(1, outcome="MAX_DURATION")
 
             state.clean_for_next_iteration()
 

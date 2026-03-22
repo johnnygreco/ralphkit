@@ -27,14 +27,14 @@ def test_ralph_cmd_default():
 
 
 def test_ralph_cmd_with_version():
-    cmd = _ralph_cmd(["do stuff"], ralph_version="0.5.0", subcommand="fix")
-    assert cmd == "uvx --refresh --from ralphkit==0.5.0 ralphkit fix 'do stuff'"
+    cmd = _ralph_cmd(["do stuff"], ralph_version="0.5.0", subcommand="build")
+    assert cmd == "uvx --refresh --from ralphkit==0.5.0 ralphkit build 'do stuff'"
 
 
 @patch("ralphkit.remote.current_version", return_value="0.1.7")
 def test_ralph_cmd_with_current_version(mock_version):
-    cmd = _ralph_cmd(["do stuff"], ralph_version="current", subcommand="fix")
-    assert cmd == "uvx --refresh --from ralphkit==0.1.7 ralphkit fix 'do stuff'"
+    cmd = _ralph_cmd(["do stuff"], ralph_version="current", subcommand="build")
+    assert cmd == "uvx --refresh --from ralphkit==0.1.7 ralphkit build 'do stuff'"
     mock_version.assert_called_once()
 
 
@@ -62,8 +62,8 @@ def test_ralph_cmd_with_subcommand():
 
 
 def test_ralph_cmd_with_subcommand_and_version():
-    cmd = _ralph_cmd(["task.md"], ralph_version="0.5.0", subcommand="fix")
-    assert cmd == "uvx --refresh --from ralphkit==0.5.0 ralphkit fix task.md"
+    cmd = _ralph_cmd(["task.md"], ralph_version="0.5.0", subcommand="build")
+    assert cmd == "uvx --refresh --from ralphkit==0.5.0 ralphkit build task.md"
 
 
 @pytest.mark.parametrize(

@@ -400,25 +400,9 @@ pipe:
     assert config.pipe[0].handoff_prompt == "Custom handoff for step1."
 
 
-def test_load_config_pipe_handoff_prompt(tmp_path):
-    cfg_file = tmp_path / "ralph.yaml"
-    cfg_file.write_text(
-        """\
-handoff_prompt: "Global handoff override."
-pipe:
-  - step_name: step1
-    task_prompt: "P."
-    system_prompt: "S."
-"""
-    )
-    config = load_config(cfg_file)
-    assert config.handoff_prompt == "Global handoff override."
-
-
 def test_load_config_defaults_pipe_empty():
     config = load_config(None)
     assert config.pipe == []
-    assert config.handoff_prompt is None
 
 
 # ── Plan model config tests ──────────────────────────────────────

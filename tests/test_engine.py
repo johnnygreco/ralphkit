@@ -1066,19 +1066,13 @@ def test_resolve_handoff_step_level_wins():
     step = StepConfig(
         step_name="s", task_prompt="", system_prompt="", handoff_prompt="STEP"
     )
-    result = _resolve_handoff(step, "CONFIG", 1, 1, [step], "dir")
+    result = _resolve_handoff(step, 1, 1, [step], "dir")
     assert result == "STEP"
-
-
-def test_resolve_handoff_config_level_wins_over_default():
-    step = StepConfig(step_name="s", task_prompt="", system_prompt="")
-    result = _resolve_handoff(step, "CONFIG", 1, 1, [step], "dir")
-    assert result == "CONFIG"
 
 
 def test_resolve_handoff_falls_back_to_default():
     step = StepConfig(step_name="s", task_prompt="", system_prompt="")
-    result = _resolve_handoff(step, None, 1, 1, [step], "dir")
+    result = _resolve_handoff(step, 1, 1, [step], "dir")
     assert "task.md" in result
 
 

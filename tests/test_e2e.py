@@ -84,6 +84,21 @@ def _read_report(state_dir: Path) -> dict:
     return json.loads((run_dir / "report.json").read_text())
 
 
+_SIMPLE_PIPE_YAML = textwrap.dedent("""\
+    pipe:
+      - step_name: step1
+        task_prompt: "Do work on {state_dir}/task.md"
+        system_prompt: "You are helpful."
+""")
+
+
+def _write_pipe_config(tmp_path: Path) -> Path:
+    """Write a simple single-step pipe config and return its path."""
+    cfg = tmp_path / "pipe.yaml"
+    cfg.write_text(_SIMPLE_PIPE_YAML)
+    return cfg
+
+
 # ---------------------------------------------------------------------------
 # Basic CLI surface
 # ---------------------------------------------------------------------------
@@ -93,7 +108,7 @@ class TestCLISurface:
     def test_help(self, env):
         r = _rk(["--help"], env)
         assert r.returncode == 0
-        for cmd in ("build", "fix", "research", "plan", "big-swing", "pipe", "loop"):
+        for cmd in ("build", "pipe", "loop"):
             assert cmd in r.stdout
 
     def test_version(self, env):
@@ -137,47 +152,7 @@ class TestMigrationShims:
 # ---------------------------------------------------------------------------
 
 
-class TestPipeWorkflows:
-    """Run each pipe-based subcommand end-to-end and verify artifacts.
-
-    The parametrized test proves that for each command:
-    1. CLI parsing and Typer dispatch work
-    2. The correct prompt factory wired the correct steps
-    3. The engine ran every step (session_id from fake claude's JSON output)
-    4. State management wrote task.md and report.json
-    """
-
-    @pytest.mark.parametrize(
-        "cmd, task, expected_steps",
-        [
-            ("fix", "a test bug", ["diagnose", "fix", "verify"]),
-            ("research", "test topic", ["explore", "synthesize", "report"]),
-            ("plan", "test task", ["analyze", "design"]),
-            (
-                "big-swing",
-                "ambitious task",
-                ["research", "plan", "build", "review", "fix", "verify"],
-            ),
-        ],
-    )
-    def test_pipe_workflow(self, env, tmp_path, cmd, task, expected_steps):
-        state_dir = tmp_path / "state"
-        r = _rk([cmd, task, "-f", "--state-dir", str(state_dir)], env)
-        assert r.returncode == 0
-
-        run_dir = next((state_dir / "runs").iterdir())
-
-        # Task is persisted
-        assert task in (run_dir / "task.md").read_text()
-
-        # Report records correct steps, and each was actually executed
-        # (session_id comes from fake claude's JSON → proves run_claude was called)
-        report = json.loads((run_dir / "report.json").read_text())
-        assert report["outcome"] == "PIPE_COMPLETE"
-        assert [s["step_name"] for s in report["steps"]] == expected_steps
-        for s in report["steps"]:
-            assert s["phase"] == "pipe"
-            assert s["session_id"] == "fake-session"
+# (Pipe workflow tests removed — fix, research, plan, big-swing commands dropped)
 
 
 # ---------------------------------------------------------------------------
@@ -476,9 +451,21 @@ class TestBuildLoop:
 class TestTaskResolution:
     def test_reads_md_file(self, env, tmp_path):
         state_dir = tmp_path / "state"
+        cfg = _write_pipe_config(tmp_path)
         task_file = tmp_path / "bug.md"
         task_file.write_text("# Bug Report\nThe widget is broken.")
-        r = _rk(["fix", str(task_file), "-f", "--state-dir", str(state_dir)], env)
+        r = _rk(
+            [
+                "pipe",
+                str(task_file),
+                "-c",
+                str(cfg),
+                "-f",
+                "--state-dir",
+                str(state_dir),
+            ],
+            env,
+        )
         assert r.returncode == 0
 
         run_dir = next((state_dir / "runs").iterdir())
@@ -489,7 +476,19 @@ class TestTaskResolution:
     def test_missing_md_used_as_literal(self, env, tmp_path):
         """A .md path that doesn't exist is used as a literal string."""
         state_dir = tmp_path / "state"
-        r = _rk(["fix", "nonexistent.md", "-f", "--state-dir", str(state_dir)], env)
+        cfg = _write_pipe_config(tmp_path)
+        r = _rk(
+            [
+                "pipe",
+                "nonexistent.md",
+                "-c",
+                str(cfg),
+                "-f",
+                "--state-dir",
+                str(state_dir),
+            ],
+            env,
+        )
         assert r.returncode == 0
 
         run_dir = next((state_dir / "runs").iterdir())
@@ -505,8 +504,11 @@ class TestStateManagement:
     def test_sequential_runs_increment(self, env, tmp_path):
         """Each run creates a new numbered directory; symlink tracks latest."""
         state_dir = tmp_path / "state"
-        _rk(["fix", "first", "-f", "--state-dir", str(state_dir)], env)
-        _rk(["fix", "second", "-f", "--state-dir", str(state_dir)], env)
+        cfg = _write_pipe_config(tmp_path)
+        _rk(["pipe", "first", "-c", str(cfg), "-f", "--state-dir", str(state_dir)], env)
+        _rk(
+            ["pipe", "second", "-c", str(cfg), "-f", "--state-dir", str(state_dir)], env
+        )
 
         runs = sorted((state_dir / "runs").iterdir())
         assert len(runs) == 2
@@ -520,10 +522,14 @@ class TestStateManagement:
     def test_report_records_step_metadata(self, env, tmp_path):
         """Report captures model, phase, timing, and session_id for each step."""
         state_dir = tmp_path / "state"
-        _rk(["fix", "bug", "-f", "--state-dir", str(state_dir)], env)
+        cfg = _write_pipe_config(tmp_path)
+        _rk(
+            ["pipe", "bug", "-c", str(cfg), "-f", "--state-dir", str(state_dir)],
+            env,
+        )
 
         report = _read_report(state_dir)
-        assert len(report["steps"]) == 3
+        assert len(report["steps"]) == 1
         for step in report["steps"]:
             assert step["phase"] == "pipe"
             assert step["model"] is not None
@@ -548,7 +554,19 @@ class TestRunsCommand:
     def test_lists_completed_runs(self, env, tmp_path):
         """After running a pipe, ``runs`` lists it with task preview."""
         state_dir = tmp_path / "state"
-        _rk(["fix", "find the bug", "-f", "--state-dir", str(state_dir)], env)
+        cfg = _write_pipe_config(tmp_path)
+        _rk(
+            [
+                "pipe",
+                "find the bug",
+                "-c",
+                str(cfg),
+                "-f",
+                "--state-dir",
+                str(state_dir),
+            ],
+            env,
+        )
         r = _rk(["runs", "--state-dir", str(state_dir)], env)
         assert r.returncode == 0
         assert "001" in r.stdout
@@ -596,8 +614,9 @@ class TestConfirmation:
     def test_abort_on_no(self, env, tmp_path):
         """Without -f, answering 'n' aborts before running any steps."""
         state_dir = tmp_path / "state"
+        cfg = _write_pipe_config(tmp_path)
         r = _rk(
-            ["fix", "task", "--state-dir", str(state_dir)],
+            ["pipe", "task", "-c", str(cfg), "--state-dir", str(state_dir)],
             env,
             input="n\n",
         )
@@ -610,8 +629,9 @@ class TestConfirmation:
     def test_proceed_on_yes(self, env, tmp_path):
         """Without -f, answering 'y' runs the full workflow."""
         state_dir = tmp_path / "state"
+        cfg = _write_pipe_config(tmp_path)
         r = _rk(
-            ["fix", "task", "--state-dir", str(state_dir)],
+            ["pipe", "task", "-c", str(cfg), "--state-dir", str(state_dir)],
             env,
             input="y\n",
         )
@@ -628,13 +648,13 @@ class TestConfirmation:
 
 class TestValidation:
     def test_working_dir_without_host(self, env):
-        r = _rk(["fix", "bug", "-f", "--working-dir", "/tmp/x"], env)
+        r = _rk(["build", "bug", "-f", "--working-dir", "/tmp/x"], env)
         assert r.returncode != 0
         combined = r.stdout + r.stderr
         assert "--host" in combined
 
     def test_ralph_version_without_host(self, env):
-        r = _rk(["fix", "bug", "-f", "--ralph-version", "0.5.0"], env)
+        r = _rk(["build", "bug", "-f", "--ralph-version", "0.5.0"], env)
         assert r.returncode != 0
         combined = r.stdout + r.stderr
         assert "--host" in combined
@@ -643,8 +663,8 @@ class TestValidation:
         r = _rk(["build"], env)
         assert r.returncode != 0
 
-    def test_fix_missing_task(self, env):
-        r = _rk(["fix"], env)
+    def test_build_missing_task_no_args(self, env):
+        r = _rk(["build"], env)
         assert r.returncode != 0
 
 
@@ -657,10 +677,13 @@ class TestOptionForwarding:
     def test_default_model_override(self, env, tmp_path):
         """--default-model propagates through to every step in the report."""
         state_dir = tmp_path / "state"
+        cfg = _write_pipe_config(tmp_path)
         r = _rk(
             [
-                "fix",
+                "pipe",
                 "bug",
+                "-c",
+                str(cfg),
                 "-f",
                 "--state-dir",
                 str(state_dir),
@@ -704,8 +727,9 @@ class TestOptionForwarding:
     def test_state_dir_override(self, env, tmp_path):
         """--state-dir directs all state to the specified directory."""
         custom_dir = tmp_path / "custom_state"
+        cfg = _write_pipe_config(tmp_path)
         r = _rk(
-            ["fix", "bug", "-f", "--state-dir", str(custom_dir)],
+            ["pipe", "bug", "-c", str(cfg), "-f", "--state-dir", str(custom_dir)],
             env,
         )
         assert r.returncode == 0
