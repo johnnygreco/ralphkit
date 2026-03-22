@@ -26,6 +26,15 @@ def meta_path_local(job_id: str) -> Path:
     return LOGS_DIR_LOCAL / f"{job_id}.meta.json"
 
 
+def current_version() -> str | None:
+    """Best-effort version for the currently running ralphkit CLI."""
+    try:
+        from ralphkit._version import version
+    except Exception:
+        return None
+    return version or None
+
+
 def job_path_local(job_id: str) -> Path:
     """Local Python path to a job scratch directory."""
     return JOBS_DIR_LOCAL / job_id
@@ -60,6 +69,8 @@ def build_submission_metadata(
     working_dir: str | None,
     isolation: str | None,
     scratch_dir: str,
+    package_spec: str | None = None,
+    caller_version: str | None = None,
 ) -> dict:
     return {
         "job_id": job_id,
@@ -75,6 +86,8 @@ def build_submission_metadata(
         "idle_timeout_seconds": _arg_int_value(ralph_args, "--idle-timeout-seconds"),
         "cleanup_on_error": _arg_value(ralph_args, "--cleanup-on-error"),
         "resume_run": _arg_value(ralph_args, "--resume-run"),
+        "package_spec": package_spec,
+        "caller_version": caller_version,
     }
 
 
@@ -83,6 +96,9 @@ def build_job_script(
     ralph_cmd: str,
     working_dir: str | None = None,
     isolation: str | None = None,
+    *,
+    package_spec: str | None = None,
+    caller_version: str | None = None,
 ) -> str:
     """Generate a bash script for a ralphkit job."""
     lines = [
@@ -120,9 +136,20 @@ def build_job_script(
             'export RALPHKIT_WORKING_DIR="$ORIG_DIR"',
             'cd "$ORIG_DIR" || exit 1',
         ]
+    lines.append('echo "[ralphkit] started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$LOG_FILE"')
+    if package_spec:
+        lines.append(
+            f"echo {shlex.quote(f'[ralphkit] package={package_spec}')} >> \"$LOG_FILE\""
+        )
+    if caller_version:
+        lines.append(
+            f"echo {shlex.quote(f'[ralphkit] caller_version={caller_version}')} >> \"$LOG_FILE\""
+        )
     lines += [
+        'echo "[ralphkit] scratch_dir=$JOB_DIR" >> "$LOG_FILE"',
+        'echo "[ralphkit] working_dir=$PWD" >> "$LOG_FILE"',
         "",
-        f'{ralph_cmd} 2>&1 | tee "$LOG_FILE"',
+        f'{ralph_cmd} 2>&1 | tee -a "$LOG_FILE"',
         "RC=${PIPESTATUS[0]}",
         'echo "[ralphkit] exit=$RC" >> "$LOG_FILE"',
         "exit $RC",

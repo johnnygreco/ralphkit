@@ -230,8 +230,17 @@ def run_claude(
 
     try:
         parsed = json.loads(stdout_data)
-    except (json.JSONDecodeError, TypeError):
-        return None
+    except (json.JSONDecodeError, TypeError) as e:
+        raise ClaudeRunError(
+            "claude exited successfully but did not emit valid JSON.",
+            kind="invalid_json_output",
+            elapsed_s=elapsed_s,
+            timeout_seconds=timeout_seconds,
+            idle_timeout_seconds=idle_timeout_seconds,
+            stdout_tail=_tail_text(stdout_data),
+            stderr_tail=_tail_text(stderr_data),
+            transcript_path=transcript_path,
+        ) from e
     if isinstance(parsed, dict) and transcript_path:
         parsed["_ralphkit_transcript_path"] = transcript_path
     return parsed

@@ -7,6 +7,7 @@ from datetime import datetime
 from ralphkit.tmux import (
     build_submission_metadata,
     build_job_script,
+    current_version,
     job_path_local,
     parse_session_list,
     log_path_local,
@@ -35,7 +36,14 @@ def submit_local(
     _check_tmux()
 
     ralph_cmd = f"ralphkit {subcommand} " + shlex.join(ralph_args)
-    script = build_job_script(job_id, ralph_cmd, working_dir, isolation=isolation)
+    script = build_job_script(
+        job_id,
+        ralph_cmd,
+        working_dir,
+        isolation=isolation,
+        package_spec="local-cli",
+        caller_version=current_version(),
+    )
     script_file = script_path_local(job_id)
     meta_file = meta_path_local(job_id)
     job_dir = job_path_local(job_id)
@@ -52,6 +60,8 @@ def submit_local(
                 working_dir=working_dir,
                 isolation=isolation,
                 scratch_dir=str(job_dir),
+                package_spec="local-cli",
+                caller_version=current_version(),
             )
             | {
                 "submitted_at": datetime.now().isoformat(),
