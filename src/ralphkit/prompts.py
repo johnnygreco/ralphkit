@@ -73,7 +73,8 @@ STATE FILES (in {state_dir}/):
 - iteration.txt — Current iteration number
 - verify_failure.txt — If present, the verification command failed last iteration (read and fix)
 - RALPH-BLOCKED.md — Create this if you cannot proceed (explain why)
-- RALPH-COMPLETE.md — Create this if ALL remaining work is genuinely done (explain why)
+- RALPH-COMPLETE.md — Create this if ALL remaining work is genuinely done (explain why).
+  This file is removed between iterations, so you must recreate it each time if work is still complete.
 
 RULES:
 - Work on exactly ONE item per iteration

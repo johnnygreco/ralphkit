@@ -163,6 +163,33 @@ def test_total_turns():
     assert report.total_turns() == 10
 
 
+def test_estimated_cost_excludes_cached_from_input():
+    """inputTokens includes cache hits/writes; cost should not double-count them."""
+    report = RunReport()
+    report.record_step(
+        step_name="w",
+        model="opus",
+        phase="loop",
+        duration_s=1.0,
+        claude_output={
+            "modelUsage": {
+                "claude-opus-4-6": {
+                    "inputTokens": 1_000_000,
+                    "outputTokens": 0,
+                    "cacheReadInputTokens": 600_000,
+                    "cacheCreationInputTokens": 200_000,
+                }
+            }
+        },
+    )
+    cost = report.estimated_cost_usd()
+    # Non-cached input: 1M - 600K - 200K = 200K tokens
+    # Expected: 200K * 15/1M + 600K * 1.5/1M + 200K * 18.75/1M
+    #         = 3.0 + 0.9 + 3.75 = 7.65
+    expected = (200_000 * 15.0 + 600_000 * 1.5 + 200_000 * 18.75) / 1_000_000
+    assert abs(cost - expected) < 0.001
+
+
 def test_to_dict_complete():
     report = RunReport()
     report.outcome = "COMPLETE"

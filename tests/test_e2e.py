@@ -663,10 +663,6 @@ class TestValidation:
         r = _rk(["build"], env)
         assert r.returncode != 0
 
-    def test_build_missing_task_no_args(self, env):
-        r = _rk(["build"], env)
-        assert r.returncode != 0
-
 
 # ---------------------------------------------------------------------------
 # Option forwarding

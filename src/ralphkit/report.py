@@ -145,8 +145,10 @@ class RunReport:
             out = tokens.get("outputTokens", 0)
             cr = tokens.get("cacheReadInputTokens", 0)
             cw = tokens.get("cacheCreationInputTokens", 0)
+            # inputTokens includes cache hits/writes; subtract them to avoid double-counting
+            non_cached_inp = max(inp - cr - cw, 0)
             total += (
-                inp * cost["input"]
+                non_cached_inp * cost["input"]
                 + out * cost["output"]
                 + cr * cost["cache_read"]
                 + cw * cost["cache_write"]
