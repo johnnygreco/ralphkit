@@ -5,9 +5,11 @@ def test_build_job_script_basic_output():
     script = build_job_script("rk-test-0307-120000-abcd", "ralph run pipe.yml")
     assert script.startswith("#!/usr/bin/env bash\n")
     assert "set -uo pipefail" in script
-    assert 'tee "$LOG_FILE"' in script
+    assert 'tee -a "$LOG_FILE"' in script
     assert "RC=${PIPESTATUS[0]}" in script
     assert 'LOG_FILE="$LOG_DIR/rk-test-0307-120000-abcd.log"' in script
+    assert 'echo "[ralphkit] started_at=' in script
+    assert 'echo "[ralphkit] working_dir=$PWD"' in script
 
 
 def test_build_job_script_with_working_dir():
@@ -32,6 +34,17 @@ def test_build_job_script_exports_path():
 def test_build_job_script_enables_agent_teams():
     script = build_job_script("rk-test-0307-120000-abcd", "ralph run pipe.yml")
     assert "export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1" in script
+
+
+def test_build_job_script_logs_package_metadata():
+    script = build_job_script(
+        "rk-test-0307-120000-abcd",
+        "ralph run pipe.yml",
+        package_spec="ralphkit==0.1.7",
+        caller_version="0.1.7",
+    )
+    assert "[ralphkit] package=ralphkit==0.1.7" in script
+    assert "[ralphkit] caller_version=0.1.7" in script
 
 
 def test_parse_session_list_empty_string():

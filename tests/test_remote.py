@@ -31,6 +31,13 @@ def test_ralph_cmd_with_version():
     assert cmd == "uvx --refresh --from ralphkit==0.5.0 ralphkit fix 'do stuff'"
 
 
+@patch("ralphkit.remote.current_version", return_value="0.1.7")
+def test_ralph_cmd_with_current_version(mock_version):
+    cmd = _ralph_cmd(["do stuff"], ralph_version="current", subcommand="fix")
+    assert cmd == "uvx --refresh --from ralphkit==0.1.7 ralphkit fix 'do stuff'"
+    mock_version.assert_called_once()
+
+
 def test_ralph_cmd_auto_detects_prerelease():
     cmd = _ralph_cmd(["do stuff"], ralph_version="0.6.0a1", subcommand="build")
     assert (
@@ -42,6 +49,11 @@ def test_ralph_cmd_auto_detects_prerelease():
 def test_ralph_cmd_no_prerelease_for_stable():
     cmd = _ralph_cmd(["do stuff"], ralph_version="0.6.0", subcommand="build")
     assert cmd == "uvx --refresh --from ralphkit==0.6.0 ralphkit build 'do stuff'"
+
+
+def test_ralph_cmd_with_latest_alias():
+    cmd = _ralph_cmd(["do stuff"], ralph_version="latest", subcommand="build")
+    assert cmd == "uvx --refresh --from ralphkit@latest ralphkit build 'do stuff'"
 
 
 def test_ralph_cmd_with_subcommand():
@@ -97,9 +109,12 @@ def test_submit_job_full_flow(mock_run):
     assert meta["subcommand"] == "build"
     assert meta["isolation"] == "shared"
     assert meta["scratch_dir"].endswith("/.local/share/ralphkit/jobs/rk-abc123")
+    assert meta["package_spec"] == "ralphkit@latest"
+    assert meta["caller_version"]
     assert "submitted_at" in meta
     assert "mkdir -p" not in calls[4][0][0][4]
     assert "cat >" in calls[4][0][0][4]
+    assert "[ralphkit] package=ralphkit@latest" in calls[4][1]["input"]
     # Launch tmux
     assert "tmux new-session" in calls[5][0][0][4]
     assert "remain-on-exit" in calls[5][0][0][4]
@@ -141,9 +156,11 @@ def test_submit_job_with_ralph_version(mock_run):
     # calls[3]=metadata upload, calls[4]=script upload
     meta = json.loads(calls[3][1]["input"])
     assert meta["subcommand"] == "build"
+    assert meta["package_spec"] == "ralphkit==0.5.0"
     upload_call = calls[4]
     script_content = upload_call[1]["input"]
     assert "uvx --refresh --from ralphkit==0.5.0 ralphkit" in script_content
+    assert "[ralphkit] package=ralphkit==0.5.0" in script_content
 
 
 @patch("ralphkit.remote.subprocess.run")

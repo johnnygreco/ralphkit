@@ -9,6 +9,7 @@ from ralphkit.tmux import (
     TMUX_LIST_FORMAT,
     build_submission_metadata,
     build_job_script,
+    current_version,
     parse_session_list,
 )
 
@@ -54,6 +55,22 @@ def _is_prerelease(version: str) -> bool:
     return bool(re.search(r"(a|b|rc|dev|alpha|beta)\d*", version))
 
 
+def _resolve_ralph_version(ralph_version: str | None) -> str | None:
+    if ralph_version in (None, "", "latest"):
+        return None
+    if ralph_version == "current":
+        resolved = current_version()
+        if not resolved:
+            raise SystemExit("Could not determine the current ralphkit version.")
+        return resolved
+    return ralph_version
+
+
+def _package_spec(ralph_version: str | None) -> str:
+    resolved = _resolve_ralph_version(ralph_version)
+    return f"ralphkit=={resolved}" if resolved else "ralphkit@latest"
+
+
 def _ralph_cmd(
     ralph_args: list[str],
     ralph_version: str | None = None,
@@ -61,9 +78,10 @@ def _ralph_cmd(
     subcommand: str,
 ) -> str:
     """Build the uvx ralphkit command string."""
-    pkg = f"ralphkit=={ralph_version}" if ralph_version else "ralphkit@latest"
+    resolved_version = _resolve_ralph_version(ralph_version)
+    pkg = f"ralphkit=={resolved_version}" if resolved_version else "ralphkit@latest"
     parts = ["uvx", "--refresh", "--from", shlex.quote(pkg)]
-    if ralph_version and _is_prerelease(ralph_version):
+    if resolved_version and _is_prerelease(resolved_version):
         parts += ["--prerelease", "allow"]
     parts += ["ralphkit", subcommand]
     return " ".join(parts) + " " + shlex.join(ralph_args)
@@ -81,6 +99,9 @@ def submit_job(
     plan_content: str | None = None,
 ) -> None:
     """Submit a ralphkit job to a remote host via SSH + tmux."""
+    caller_version = current_version()
+    package_spec = _package_spec(ralph_version)
+
     # Pre-flight: tmux available?
     result = _ssh_run(host, "command -v tmux", check=False, login_shell=True)
     if result.returncode != 0:
@@ -134,6 +155,8 @@ def submit_job(
                 working_dir=working_dir,
                 isolation=isolation,
                 scratch_dir=f"{remote_home}/.local/share/ralphkit/jobs/{job_id}",
+                package_spec=package_spec,
+                caller_version=caller_version,
             )
             | {
                 "submitted_at": datetime.now().isoformat(),
@@ -156,6 +179,8 @@ def submit_job(
         ralph_cmd,
         working_dir=working_dir,
         isolation=isolation,
+        package_spec=package_spec,
+        caller_version=caller_version,
     )
 
     # Upload script via ssh stdin pipe

@@ -65,9 +65,15 @@ def test_run_claude_success_invokes_popen_with_expected_options(
 
 @patch.object(runner, "_latest_transcript", return_value=(None, None))
 @patch.object(runner.subprocess, "Popen")
-def test_run_claude_returns_none_for_invalid_json(mock_popen, mock_latest):
+def test_run_claude_raises_invalid_json_error(mock_popen, mock_latest):
     mock_popen.return_value = _proc(stdout="not json")
-    assert run_claude("p", "m", "s") is None
+
+    with pytest.raises(ClaudeRunError, match="did not emit valid JSON") as exc_info:
+        run_claude("p", "m", "s")
+
+    error = exc_info.value
+    assert error.kind == "invalid_json_output"
+    assert error.stdout_tail == "not json"
     mock_latest.assert_called_once()
 
 
