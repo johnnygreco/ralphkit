@@ -68,9 +68,7 @@ def test_run_claude_success_invokes_popen_with_expected_options(
 def test_run_claude_raises_invalid_json_error(mock_popen, mock_latest):
     mock_popen.return_value = _proc(stdout="not json")
 
-    with pytest.raises(
-        ClaudeRunError, match="did not emit valid JSON"
-    ) as exc_info:
+    with pytest.raises(ClaudeRunError, match="did not emit valid JSON") as exc_info:
         run_claude("p", "m", "s")
 
     error = exc_info.value

@@ -136,14 +136,16 @@ def build_job_script(
             'export RALPHKIT_WORKING_DIR="$ORIG_DIR"',
             'cd "$ORIG_DIR" || exit 1',
         ]
-    lines.append('echo "[ralphkit] started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$LOG_FILE"')
+    lines.append(
+        'echo "[ralphkit] started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$LOG_FILE"'
+    )
     if package_spec:
         lines.append(
-            f"echo {shlex.quote(f'[ralphkit] package={package_spec}')} >> \"$LOG_FILE\""
+            f'echo {shlex.quote(f"[ralphkit] package={package_spec}")} >> "$LOG_FILE"'
         )
     if caller_version:
         lines.append(
-            f"echo {shlex.quote(f'[ralphkit] caller_version={caller_version}')} >> \"$LOG_FILE\""
+            f'echo {shlex.quote(f"[ralphkit] caller_version={caller_version}")} >> "$LOG_FILE"'
         )
     lines += [
         'echo "[ralphkit] scratch_dir=$JOB_DIR" >> "$LOG_FILE"',
